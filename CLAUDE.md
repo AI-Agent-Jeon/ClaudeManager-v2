@@ -45,18 +45,68 @@
 (남은 이슈, 필요한 의사결정)
 ```
 
+## 개발 방법론
+
+반복적 점진개발 + 칸반. Phase 단위로 기획→분석→설계→개발→테스트→배포→운영 전체 사이클을 반복한다.
+- 주요 단계 WIP = 1 (한 단계 끝내야 다음 단계)
+- 독립 Task 병렬 허용 (test-sub + review-sub 동시 가능)
+- 운영 피드백은 다음 Phase 기획의 입력
+
+## 스킬 (SDLC 7단계)
+
+| 스킬 | 단계 | 핵심 |
+|------|------|------|
+| plan | 기획 | 요구사항 정형화, Phase 범위 확정 |
+| analyze | 분석 | 기술 검토, 의존관계, 리스크 |
+| design | 설계 | 아키텍처, API, 화면 명세서 |
+| develop | 개발 | 코딩, 단위 테스트, PR 생성 |
+| test | 테스트 | 리뷰, 통합 테스트, PR 머지 |
+| deploy | 배포 | 빌드, 배포 (실행 시 대표 승인) |
+| operate | 운영 | 버그 수정, 다음 Phase 피드백 |
+
+## 산출물 코드 체계
+
+PLN(기획), ANL(분석), DES(설계), DEV(개발), TST(테스트), DPL(배포), OPS(운영)
+요구사항: FR(기능), NFR(비기능), UIR(UI), DAT(데이터), INT(인터페이스)
+테스트: TC-UT(단위), TC-IT(통합), TC-ST(시나리오), TC-PT(성능), TC-SE(보안), TC-UA(인수)
+
+## 기준 원본 정책
+
+- Notion: 대표 검토/승인 원본
+- Git (docs/): 에이전트 실행 원본
+- 충돌 시 Notion(승인본) 우선
+
 ## 디렉토리 구조
 
 ```
 .claude/agents/    — 에이전트 정의 (하네스)
-.claude/skills/    — 스킬 정의 (작업 절차)
+.claude/skills/    — 스킬 정의 (SDLC 7단계)
 .orchestrator/     — 에이전트 간 통신
   handoff/         — Sub-Agent 간 작업 인수인계
   feedback/        — Sub-Agent 간 피드백
   status/          — Agent 상태 파일
   control/         — 제어 신호 (일시정지/재개/취소)
-docs/              — 문서 (요구사항, 설계서)
+docs/              — 산출물 문서
+  requirements/    — PLN: 요구사항, 용어 사전, 코드 체계
+  plans/           — PLN: Phase 계획서
+  analysis/        — ANL: 분석 보고서, 기술 스택 결정서
+  design/          — DES: 설계서
+    api/           —   API 명세서
+    data/          —   데이터 모델 (ERD)
+    ui/            —   와이어프레임, 스토리보드, 화면 명세서, 상태 흐름도
+  test-reports/    — TST: 테스트 결과
+    cases/         —   테스트 케이스 문서
+    performance/   —   성능 테스트
+    security/      —   보안 검토서
+    acceptance/    —   인수 테스트 (UAT)
+  deploy/          — DPL: 배포 체크리스트, 환경 설정 가이드
+  releases/        — DPL: 릴리스 노트
+  bug-reports/     — OPS: 버그 리포트
+  operations/      — OPS: 운영 매뉴얼
+  feedback/        — OPS: 다음 Phase 피드백
 src/frontend/      — 웹 UI (대시보드)
 src/backend/       — 백엔드 서버
+  migrations/      — DB 마이그레이션 스크립트
 tests/             — 테스트
+  unit/            — 단위 테스트
 ```
