@@ -1,0 +1,17 @@
+node_modules/
+.env
+.env.local
+dist/
+*.log
+
+# Orchestrator runtime files (handoff/feedback are ephemeral)
+.orchestrator/handoff/*
+.orchestrator/feedback/*
+.orchestrator/status/*
+.orchestrator/control/*
+
+# Keep directory structure
+!.orchestrator/handoff/.gitkeep
+!.orchestrator/feedback/.gitkeep
+!.orchestrator/status/.gitkeep
+!.orchestrator/control/.gitkeep
