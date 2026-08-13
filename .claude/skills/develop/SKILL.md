@@ -5,7 +5,23 @@ description: >
   등의 요청 시 사용한다. 설계서를 기반으로 코드를 구현하고,
   단위 테스트를 작성한다.
 version: 1.0
+triggers:
+  - 개발
+  - 구현
+  - 만들어
+  - 코딩
+  - 코드 작성
 ---
+
+## Preamble (사전 점검)
+
+실행 전 다음을 확인한다:
+1. DES-001~009 존재 여부
+   !`ls docs/design/ docs/design/api/ docs/design/data/ docs/design/ui/ 2>/dev/null`
+2. 현재 브랜치 확인
+   !`git branch --show-current`
+
+누락 산출물이 있으면 Agent에게 보고하고 design 스킬 회귀를 제안한다.
 
 ## 입력 (이전 스킬에서 받는 바통)
 
@@ -68,6 +84,13 @@ version: 1.0
 
 - 동일 원인 3회 연속 실패 시 대표에게 에스컬레이션
 - 설계 오류 발견 시 design 스킬로 회귀 요청
+
+## 완료 후 액션
+
+스킬 완료 시:
+1. 완료 요약 (산출물 목록 + PR 링크)
+2. docs/00-progress.md 갱신
+3. 스킬 전환 모드 확인 → 자동이면 test 스킬 시작, 승인이면 대표에게 제안
 
 ## 다음 스킬
 

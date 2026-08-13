@@ -1,0 +1,4 @@
+{"date": "2026-08-12", "phase": "setup", "lesson": "산출물 분류 체계(필수/조건부/최초1회)는 불필요 — 기존 문서 그대로 유지하면 됨", "source": "GPT 피드백 검토"}
+{"date": "2026-08-12", "phase": "setup", "lesson": "develop 완료 = PR 생성 + 단위 테스트 통과. PR 머지는 test 통과 후", "source": "스킬 설계"}
+{"date": "2026-08-12", "phase": "setup", "lesson": "코드 체계는 두 가지: 프로젝트 코드(기획 시 정의) + 시스템 코드(설계 시 정의)", "source": "코드 체계 설계"}
+{"date": "2026-08-13", "phase": "setup", "lesson": "Claude Code 에이전트에서는 Claude 모델만 지정 가능. 외부 AI 연동은 MCP 서버로 추후 확장", "source": "AI 모델 차등화 검토"}

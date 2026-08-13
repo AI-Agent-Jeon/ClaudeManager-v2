@@ -76,17 +76,42 @@ PLN(기획), ANL(분석), DES(설계), DEV(개발), TST(테스트), DPL(배포),
 - Git (docs/): 에이전트 실행 원본
 - 충돌 시 Notion(승인본) 우선
 
+## 에이전트 구성
+
+| 에이전트 | 모델 | 역할 |
+|----------|------|------|
+| main | opus | 디스패처 (스킬 탐색, Agent 생성·위임) |
+| project-agent | opus | 프로젝트 실행 책임자 (Sub-Agent 관리, 대표 보고) |
+| dev-sub | sonnet | 코딩 실무 (소스코드, 단위 테스트) |
+| test-sub | sonnet | 테스트 실행 (코드 수정 불가) |
+| review-sub | opus | 코드 리뷰 (완전 읽기 전용) |
+| docs-sub | sonnet | 문서 작성 (docs/ 전용) |
+
+## 스킬 전환 모드
+
+mode: auto
+- plan → analyze: 승인 필수
+- analyze → design: 자동
+- design → develop: 자동
+- develop → test: 자동
+- test → deploy: 승인 필수
+- deploy → operate: 자동
+
+자동 모드에서도 스킬 내부의 의사결정 등급 '높음' 항목은 별도 대표 승인 필요.
+
 ## 디렉토리 구조
 
 ```
-.claude/agents/    — 에이전트 정의 (하네스)
+.claude/agents/    — 에이전트 정의 (하네스 6개)
 .claude/skills/    — 스킬 정의 (SDLC 7단계)
 .orchestrator/     — 에이전트 간 통신
   handoff/         — Sub-Agent 간 작업 인수인계
   feedback/        — Sub-Agent 간 피드백
   status/          — Agent 상태 파일
   control/         — 제어 신호 (일시정지/재개/취소)
+  learnings.jsonl  — 프로젝트 학습 기록
 docs/              — 산출물 문서
+  00-progress.md   — Phase 진행 상황 추적
   requirements/    — PLN: 요구사항, 용어 사전, 코드 체계
   plans/           — PLN: Phase 계획서
   analysis/        — ANL: 분석 보고서, 기술 스택 결정서
