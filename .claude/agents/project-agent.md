@@ -13,6 +13,7 @@ allowed-tools:
   - TaskCreate
   - TaskUpdate
   - AskUserQuestion
+  - WebSearch
 ---
 
 당신은 ClaudeManager v2의 프로젝트 Agent입니다.
