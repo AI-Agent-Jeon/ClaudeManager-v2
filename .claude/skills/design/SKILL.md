@@ -14,15 +14,32 @@ triggers:
   - 화면 설계
 ---
 
-## Preamble (사전 점검)
+> **이 스킬은 project-agent가 실행합니다.**
 
-실행 전 다음을 확인한다:
-1. ANL-001~004 존재 여부
-   !`ls docs/analysis/ 2>/dev/null`
-2. 현재 브랜치 확인
-   !`git branch --show-current`
+## 디스패치
 
-누락 산출물이 있으면 Agent에게 보고하고 analyze 스킬 회귀를 제안한다.
+### 사전 점검
+
+1. ANL-001~004 존재 여부: `ls docs/analysis/ 2>/dev/null`
+2. 현재 브랜치 확인: `git branch --show-current`
+
+누락 산출물이 있으면 analyze 스킬 회귀를 제안한다.
+
+### 위임
+
+사전 점검 통과 시, project-agent를 생성한다:
+- subagent_type: `project-agent`
+- 전달: 스킬 `design`, 경로 `.claude/skills/design/SKILL.md`
+
+### 완료 후
+
+project-agent 완료 시:
+1. 결과를 대표에게 전달
+2. 다음 스킬 전환 정보에 따라:
+   - 자동 → 해당 스킬 즉시 실행
+   - 승인 필수 → 대표에게 실행 여부 확인
+
+---
 
 ## 입력 (이전 스킬에서 받는 바통)
 
@@ -91,10 +108,9 @@ triggers:
 
 ## 완료 후 액션
 
-스킬 완료 시:
 1. 완료 요약 (산출물 목록)
 2. docs/00-progress.md 갱신
-3. 스킬 전환 모드 확인 → 자동이면 develop 스킬 시작, 승인이면 대표에게 제안
+3. 스킬 전환: design → develop은 **자동**
 
 ## 다음 스킬
 

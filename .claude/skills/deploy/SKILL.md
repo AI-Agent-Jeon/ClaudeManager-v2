@@ -12,15 +12,32 @@ triggers:
   - 빌드
 ---
 
-## Preamble (사전 점검)
+> **이 스킬은 project-agent가 실행합니다.**
 
-실행 전 다음을 확인한다:
-1. TST 전체 통과, PR 머지 확인
-   !`gh pr list --state merged --limit 5 2>/dev/null`
-2. 현재 브랜치 확인
-   !`git branch --show-current`
+## 디스패치
 
-누락 산출물이 있으면 Agent에게 보고하고 test 스킬 회귀를 제안한다.
+### 사전 점검
+
+1. TST 전체 통과, PR 머지 확인: `gh pr list --state merged --limit 5 2>/dev/null`
+2. 현재 브랜치 확인: `git branch --show-current`
+
+누락 산출물이 있으면 test 스킬 회귀를 제안한다.
+
+### 위임
+
+사전 점검 통과 시, project-agent를 생성한다:
+- subagent_type: `project-agent`
+- 전달: 스킬 `deploy`, 경로 `.claude/skills/deploy/SKILL.md`
+
+### 완료 후
+
+project-agent 완료 시:
+1. 결과를 대표에게 전달
+2. 다음 스킬 전환 정보에 따라:
+   - 자동 → 해당 스킬 즉시 실행
+   - 승인 필수 → 대표에게 실행 여부 확인
+
+---
 
 ## 입력 (이전 스킬에서 받는 바통)
 
@@ -36,7 +53,7 @@ triggers:
 
 ## 필요 권한
 
-- 도구: Read, Bash (빌드/배포)
+- 도구: Read, Write, Bash (빌드/배포)
 - Sub-Agent: 없음
 
 ## 절차
@@ -67,7 +84,6 @@ triggers:
 - 실제 환경 배포 실행만 대표 승인 필수 (의사결정 등급: 높음)
 - 테스트 미통과 상태에서 배포하지 않는다
 - 롤백 계획을 배포 전에 준비한다
-- 배포 후 모니터링 시간은 프로젝트 설정값에 따른다
 
 ## 완료 조건
 
@@ -81,10 +97,9 @@ triggers:
 
 ## 완료 후 액션
 
-스킬 완료 시:
 1. 완료 요약 (배포 결과 + 릴리스 노트)
 2. docs/00-progress.md 갱신
-3. 스킬 전환 모드 확인 → 자동이면 operate 스킬 시작, 승인이면 대표에게 제안
+3. 스킬 전환: deploy → operate는 **자동**
 
 ## 다음 스킬
 

@@ -4,11 +4,9 @@ description: "리뷰 Sub-Agent — 코드 리뷰, 보안 검토 (완전 읽기 �
 model: opus
 allowed-tools:
   - Read
+  - Bash
   - Grep
   - Glob
-  - Bash(git diff *)
-  - Bash(git log *)
-  - Bash(git show *)
 disallowed-tools:
   - Edit
   - Write
@@ -22,9 +20,9 @@ disallowed-tools:
 
 - Agent로부터 할당받은 코드/문서를 검토한다
 - 정확성, 보안, 코딩 규칙, 유지보수성을 검토한다
-- 발견사항을 심각도별로 분류하여 보고한다
+- 발견사항을 심각도별로 분류하여 Agent에게 텍스트로 보고한다
 
-## 입출력 문서 경로
+## 입출력
 
 | 구분 | 경로 | 용도 |
 |------|------|------|
@@ -32,7 +30,16 @@ disallowed-tools:
 | 읽기 | `tests/**/*` | 테스트 커버리지 확인 |
 | 읽기 | `docs/design/**/*` | 설계서 대비 구현 검증 |
 | 읽기 | `CLAUDE.md`, `docs/CLAUDE.md` | 코딩 규칙 확인 |
-| 출력 | Agent에게 텍스트 보고 | 리뷰 코멘트 (심각도별 분류) |
+| 출력 | Agent에게 텍스트 보고 | 리뷰 결과 (심각도별 분류) |
+
+## Bash 사용 제한
+
+Bash는 다음 명령어만 사용한다:
+- `git diff` — 변경 내용 확인
+- `git log` — 커밋 이력 확인
+- `git show` — 특정 커밋 내용 확인
+
+그 외 Bash 명령어 사용 금지.
 
 ## 리뷰 기준
 
@@ -53,9 +60,10 @@ disallowed-tools:
 ## 제약 사항
 
 - 코드 직접 수정 절대 금지 (리뷰만)
+- Write/Edit 불가 — 결과는 텍스트로 Agent에게 보고
+- .orchestrator/ 파일은 Agent가 대신 작성한다
 - 발견사항은 심각도별 분류: 치명/높음/보통/낮음
 - 발견사항 없어도 "확인 완료"로 보고
-- 피드백은 .orchestrator/feedback/ 파일로 전달
 
 ## 보고 형식
 

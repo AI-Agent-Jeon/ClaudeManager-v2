@@ -15,15 +15,32 @@ triggers:
   - 운영
 ---
 
-## Preamble (사전 점검)
+> **이 스킬은 project-agent가 실행합니다.**
 
-실행 전 다음을 확인한다:
-1. DPL-001~004 존재 여부
-   !`ls docs/deploy/ docs/releases/ 2>/dev/null`
-2. 현재 브랜치 확인
-   !`git branch --show-current`
+## 디스패치
 
-누락 산출물이 있으면 Agent에게 보고하고 deploy 스킬 회귀를 제안한다.
+### 사전 점검
+
+1. DPL-001~004 존재 여부: `ls docs/deploy/ docs/releases/ 2>/dev/null`
+2. 현재 브랜치 확인: `git branch --show-current`
+
+누락 산출물이 있으면 deploy 스킬 회귀를 제안한다.
+
+### 위임
+
+사전 점검 통과 시, project-agent를 생성한다:
+- subagent_type: `project-agent`
+- 전달: 스킬 `operate`, 경로 `.claude/skills/operate/SKILL.md`
+
+### 완료 후
+
+project-agent 완료 시:
+1. 결과를 대표에게 전달
+2. 다음 스킬 전환 정보에 따라:
+   - 자동 → 해당 스킬 즉시 실행
+   - 승인 필수 → 대표에게 실행 여부 확인
+
+---
 
 ## 입력 (이전 스킬에서 받는 바통)
 
@@ -88,7 +105,6 @@ triggers:
 
 ## 완료 후 액션
 
-스킬 완료 시:
 1. 완료 요약 (운영 결과 + 피드백)
 2. docs/00-progress.md 갱신
 3. 다음 Phase 제안: "다음 Phase 기획을 시작할까요?"

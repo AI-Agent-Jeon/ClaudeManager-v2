@@ -13,16 +13,34 @@ triggers:
   - 점검
 ---
 
-## Preamble (사전 점검)
+> **이 스킬은 project-agent가 실행합니다.**
 
-실행 전 다음을 확인한다:
-1. DEV-001~005 존재 여부, PR 생성 상태 확인
-   !`ls src/ tests/unit/ 2>/dev/null`
-   !`gh pr list --state open --limit 5 2>/dev/null`
-2. 현재 브랜치 확인
-   !`git branch --show-current`
+## 디스패치
 
-누락 산출물이 있으면 Agent에게 보고하고 develop 스킬 회귀를 제안한다.
+### 사전 점검
+
+1. DEV-001~005 존재, PR 생성 확인:
+   - `ls src/ tests/unit/ 2>/dev/null`
+   - `gh pr list --state open --limit 5 2>/dev/null`
+2. 현재 브랜치 확인: `git branch --show-current`
+
+누락 산출물이 있으면 develop 스킬 회귀를 제안한다.
+
+### 위임
+
+사전 점검 통과 시, project-agent를 생성한다:
+- subagent_type: `project-agent`
+- 전달: 스킬 `test`, 경로 `.claude/skills/test/SKILL.md`
+
+### 완료 후
+
+project-agent 완료 시:
+1. 결과를 대표에게 전달
+2. 다음 스킬 전환 정보에 따라:
+   - 자동 → 해당 스킬 즉시 실행
+   - 승인 필수 → 대표에게 실행 여부 확인
+
+---
 
 ## 입력 (이전 스킬에서 받는 바통)
 
@@ -47,7 +65,7 @@ triggers:
 
 ## 필요 권한
 
-- 도구: Read, Bash, Grep, Glob
+- 도구: Read, Write, Bash, Grep, Glob
 - Sub-Agent: test-sub (테스트 실행), review-sub (코드 리뷰), dev-sub (버그 수정)
 
 ## 절차
@@ -79,6 +97,7 @@ triggers:
 ## 제약 사항
 
 - review-sub는 코드를 직접 수정하지 않는다 (리뷰만)
+- test-sub, review-sub는 Write 불가 — 결과는 Agent가 문서화
 - 치명/높음 발견 시 "수정 후 재테스트 필요"로 판정
 - 수정-재테스트 반복은 동일 원인 3회 연속 실패 시 대표에게 에스컬레이션
 - test-sub과 review-sub는 독립 Task로 병렬 실행 가능
@@ -97,10 +116,9 @@ triggers:
 
 ## 완료 후 액션
 
-스킬 완료 시:
 1. 완료 요약 (테스트 결과 + PR 머지 상태)
 2. docs/00-progress.md 갱신
-3. 스킬 전환 모드 확인 → 자동이면 deploy 스킬 시작, 승인이면 대표에게 제안
+3. 스킬 전환: test → deploy는 **승인 필수**
 
 ## 다음 스킬
 
