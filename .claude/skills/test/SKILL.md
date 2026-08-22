@@ -70,10 +70,13 @@ project-agent 완료 시:
 
 ## 절차
 
-1. 요구사항 정의서와 설계서 읽기
-2. 테스트 케이스 작성: 요구사항 기반
+1. PLN-001의 수용 기준(Given-When-Then)과 설계서 읽기
+2. 테스트 케이스 작성: 수용 기준의 Given-When-Then을 테스트 케이스로 변환
+   - Given → 테스트 사전 조건 (setup)
+   - When → 테스트 동작 (action)
+   - Then → 검증 (assertion)
 3. 통합 테스트 실행: test-sub에게 위임
-4. 시나리오 테스트 실행: 요구사항 기반 시나리오 test-sub에게 위임
+4. 시나리오 테스트 실행: Story Map의 Activity 흐름 기반 시나리오 test-sub에게 위임
 5. 코드 리뷰: review-sub에게 위임 (test-sub과 병렬 가능)
    - 정확성, 보안, 코딩 규칙, 유지보수성 검토
    - 발견사항을 심각도별 분류 (치명/높음/보통/낮음)
