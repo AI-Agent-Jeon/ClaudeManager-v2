@@ -64,8 +64,24 @@
 
 반복적 점진개발 + 칸반. Phase 단위로 기획→분석→설계→개발→테스트→배포→운영 전체 사이클을 반복한다.
 - 주요 단계 WIP = 1 (한 단계 끝내야 다음 단계)
-- 독립 Task 병렬 허용 (test-sub + review-sub 동시 가능)
+- **dev-sub WIP = 1** — dev-sub 인스턴스는 동시에 하나만. 워크트리 격리(FR-013) 도입 전까지 유효
+- 독립 Task 병렬 허용 (test-sub + review-sub 동시 가능 — 둘 다 쓰기 불가라 안전)
 - 운영 피드백은 다음 Phase 기획의 입력
+
+## 경로 소유권
+
+**한 파일에 소유자는 하나다.** 두 Sub-Agent가 같은 파일을 담당하면, 커밋 전 동시 편집이 Git 충돌 없이 조용히 덮인다(lost update).
+
+| 경로 | 유일 소유자 |
+|------|------------|
+| `src/**` · `tests/**` · `CHANGELOG.md` | dev-sub |
+| `docs/**` | docs-sub |
+| `.orchestrator/**` | project-agent |
+| `.claude/**` | 대표 · project-agent |
+
+Sub-Agent 위임 시 **`쓰기 허용 경로` · `쓰기 금지 경로` · `완료 판정 기준`을 반드시 페이로드에 명시**한다. 경로가 없으면 Sub-Agent는 자기 범위를 모른 채 작업한다. 쓰기 권한이 있는 Sub-Agent끼리는 허용 경로가 겹치면 병렬로 띄우지 않는다.
+
+상세는 `.claude/agents/project-agent.md` §경로 소유권 계약.
 
 ## 스킬 (SDLC 7단계)
 
@@ -99,8 +115,8 @@ PLN(기획), ANL(분석), DES(설계), DEV(개발), TST(테스트), DPL(배포),
 | project-agent | opus | 프로젝트 실행 책임자 (Sub-Agent 관리, 대표 보고) |
 | dev-sub | sonnet | 코딩 실무 (소스코드, 단위 테스트) |
 | test-sub | sonnet | 테스트 실행 (코드 수정 불가) |
-| review-sub | opus | 코드 리뷰 (완전 읽기 전용) |
-| docs-sub | sonnet | 문서 작성 (docs/ 전용) |
+| review-sub | opus | 코드 리뷰 (Write/Edit 불가 · Bash 경유 쓰기는 프롬프트 제약만) |
+| docs-sub | sonnet | 문서 작성 (docs/ 전용 · CHANGELOG 미담당) |
 
 ## 스킬 전환 모드
 

@@ -1,6 +1,6 @@
 ---
 name: review-sub
-description: "리뷰 Sub-Agent — 코드 리뷰, 보안 검토 (완전 읽기 전용)"
+description: "리뷰 Sub-Agent — 코드 리뷰, 보안 검토 (Write/Edit 불가)"
 model: opus
 allowed-tools:
   - Read
@@ -60,6 +60,7 @@ Bash는 다음 명령어만 사용한다:
 ## 제약 사항
 
 - 코드 직접 수정 절대 금지 (리뷰만)
+- **Bash로도 파일을 수정하지 않는다** — `sed -i`, 리다이렉션(`>`, `>>`), `git checkout --`, `git restore` 포함. `Write`/`Edit`는 도구로 막혀 있으나 Bash는 막혀 있지 않으므로 이 제약은 스스로 지킨다
 - Write/Edit 불가 — 결과는 텍스트로 Agent에게 보고
 - .orchestrator/ 파일은 Agent가 대신 작성한다
 - 발견사항은 심각도별 분류: 치명/높음/보통/낮음

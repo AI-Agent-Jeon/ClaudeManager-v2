@@ -75,19 +75,48 @@ allowed-tools:
 | review-sub | review-sub | 코드 리뷰·보안 검토 (Write 불가) |
 | docs-sub | docs-sub | 문서 작성 (docs/ 전용) |
 
-**생성 시 전달 사항**:
-- 구체적 작업 내용과 범위
-- 참조 파일 경로 (설계서, 요구사항 등)
-- 산출물 저장 위치 (매핑표 기준)
+## 경로 소유권 계약
+
+**같은 파일을 두 Sub-Agent가 자기 담당으로 알고 있으면 나중에 쓴 쪽이 앞의 내용을 조용히 덮는다.** 커밋 전 워킹 트리 동시 편집은 Git 충돌로 나타나지 않고 그냥 사라진다(lost update). 워크트리 격리(FR-013)는 Phase 2~3 백로그이므로, 그때까지는 아래 소유권 표로 막는다.
+
+| 경로 | 유일 소유자 | 비고 |
+|------|------------|------|
+| `src/**` | **dev-sub** | 다른 Sub-Agent는 읽기만 |
+| `tests/**` | **dev-sub** | 단위 테스트 작성. test-sub는 실행만 |
+| `CHANGELOG.md` | **dev-sub** | develop 스킬 7단계. **docs-sub은 쓰지 않는다** |
+| `docs/**` | **docs-sub** | 산출물 문서. Agent가 직접 쓸 수도 있다 |
+| `.orchestrator/**` | **project-agent** | Sub-Agent는 쓰지 않는다 |
+| `.claude/**` | **대표 · project-agent** | Sub-Agent 쓰기 금지 |
+
+**한 파일에 소유자는 하나다.** 소유자가 아닌 Sub-Agent가 그 경로를 고쳐야 하면, 직접 고치지 말고 Agent에게 보고한다.
+
+**생성 시 전달 사항** (아래 5개 필드는 **전건 필수**. 하나라도 비우고 위임하지 않는다):
+
+```
+작업 내용: {구체적 범위}
+참조 경로: {설계서·요구사항 등 읽을 파일}
+쓰기 허용 경로: {이 Sub-Agent가 생성·수정해도 되는 경로 — 소유권 표 기준}
+쓰기 금지 경로: {명시적으로 건드리면 안 되는 경로}
+완료 판정 기준: {무엇이 되면 끝인지 — 검증 가능한 형태}
+```
+
+> 위임 페이로드에 경로가 없으면 Sub-Agent는 자기 담당 범위를 모른 채 작업한다. 이것이 병렬 실행 시 충돌의 직접 원인이다.
 
 **병렬 실행**:
-- dev-sub + docs-sub: 병렬 가능
-- test-sub + review-sub: 병렬 가능
+
+| 조합 | 가능 | 조건 |
+|------|:---:|------|
+| test-sub + review-sub | ✅ | 둘 다 Write/Edit 불가라 안전 |
+| dev-sub + docs-sub | ⚠️ 조건부 | **쓰기 허용 경로의 교집합이 없을 때만.** docs-sub이 `CHANGELOG.md`를 건드리지 않게 된 뒤로 교집합은 없다 |
+| dev-sub + dev-sub | ❌ **금지** | **dev-sub WIP = 1.** 워크트리 격리(FR-013) 도입 전까지 dev-sub 인스턴스는 동시에 하나만 띄운다 |
+| dev-sub + test-sub | ❌ 금지 | 수정 완료 후 실행 (operate 6단계) |
+
+**병렬 위임 전 확인**: 두 Sub-Agent의 `쓰기 허용 경로`에 겹치는 항목이 있으면 병렬로 띄우지 않고 순차 실행한다.
 
 **Write 불가 Sub-Agent 산출물 처리**:
 test-sub, review-sub는 결과를 텍스트로 보고한다.
 Agent가 보고를 받아 직접 문서화하거나 docs-sub에게 위임한다.
-.orchestrator/ 파일도 Agent가 대신 작성한다.
+`.orchestrator/` 파일도 Agent가 대신 작성한다.
 
 ## 의사결정 처리
 

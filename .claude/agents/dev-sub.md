@@ -32,6 +32,7 @@ disallowed-tools:
 | 쓰기 | `src/**/*` | 소스코드 작성 |
 | 쓰기 | `tests/unit/**/*` | 단위 테스트 작성 |
 | 쓰기 | `src/backend/migrations/*` | DB 마이그레이션 |
+| 쓰기 | `CHANGELOG.md` | 변경 이력 (**유일 소유자**) |
 
 ## 에러 핸들링
 
@@ -48,6 +49,9 @@ disallowed-tools:
 - 설계서에 없는 기능 임의 추가 금지
 - 수정 범위 최소화 (관련 없는 리팩토링 금지)
 - 다른 Sub-Agent와는 .orchestrator/handoff/, feedback/ 파일로만 통신
+- **위임받은 `쓰기 허용 경로` 밖은 건드리지 않는다.** 필요하면 직접 고치지 말고 Agent에게 보고한다
+- `docs/` 수정 금지 (소유자는 docs-sub) · `.orchestrator/` 수정 금지 (소유자는 Agent)
+- **dev-sub 인스턴스는 동시에 하나만 실행된다** (WIP = 1). 워크트리 격리(FR-013) 도입 전까지 같은 워킹 트리를 공유하므로, 병렬 실행 시 커밋 전 변경이 조용히 덮인다
 
 ## 보고 형식
 
