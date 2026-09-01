@@ -4,7 +4,7 @@ description: >
   요구사항을 분석한다. "분석해줘", "영향 분석", "의존관계 파악",
   "기술 검토", "리스크 분석" 등의 요청 시 사용한다.
   ADR(기술 결정) + 리스크 매트릭스 + 의존관계 다이어그램 방법론.
-version: 2.0
+version: 2.1
 triggers:
   - 분석
   - 영향 분석
@@ -18,22 +18,99 @@ triggers:
 
 ## 디스패치
 
-### 사전 점검
+> **필수 선행**: 이 스킬을 실행하기 전에 `.claude/skills/_shared/execution-contract.md`(실행 계약)를 읽는다.
+> 아래는 그 계약의 이 스킬용 요약이다. **상세 규칙과 금지 사항은 계약 문서가 기준이며, 충돌 시 계약이 우선한다.**
 
-1. PLN-001~005 존재 여부: `ls docs/requirements/ docs/plans/ 2>/dev/null`
-2. 현재 브랜치 확인: `git branch --show-current`
+### 0단계: 재개 확인 (계약 §0)
 
-누락 산출물이 있으면 plan 스킬 회귀를 제안한다.
+가장 먼저 `.orchestrator/status/analyze.json`을 읽는다.
+
+- 없으면 생성하고 `current_step: 1`로 시작한다
+- 있으면 `completed_steps`의 **다음 단계부터** 재개한다
+- **`completed_steps`에 없는 단계를 수행했다고 가정하지 않는다**
+- 각 단계 종료 시 즉시 갱신한다 (몰아서 기록 금지)
+
+### 사전 점검 — 3단 검증 (계약 §1)
+
+**L1 — 존재**
+
+```bash
+ls docs/requirements/ docs/plans/ 2>/dev/null
+git branch --show-current
+```
+
+**L2 — 내용**
+
+```bash
+# 빈 껍데기 차단
+for f in docs/requirements/pln-00*.md docs/plans/pln-00*.md; do [ -s "$f" ] || echo "EMPTY: $f"; done
+# 요구사항 코드가 실제로 채번되어 있는가 (0이면 형식만 갖춘 문서다)
+grep -cE '\b(FR|NFR|UIR|DAT|INT)-[0-9]{3}\b' docs/requirements/pln-001-requirements.md
+# Notion 원본 링크 누락 탐지 (계약 §3 위반)
+grep -L 'Notion' docs/requirements/*.md docs/plans/*.md
+```
+
+**L3 — 정합**
+
+```bash
+find docs/requirements docs/plans -name 'pln-*.md' | wc -l   # 실제 (기대: 5)
+```
+
+**판정**: L1 실패 → plan 스킬 회귀 제안(진행 차단) · L2 실패 → 해당 문서 회귀(진행 차단) · L3 편차 → 대표 보고(차단 없음)
+
+`ls`가 성공했다는 이유만으로 통과 처리하지 않는다.
+
+### 범위 변경 트리거 확인 (계약 §5)
+
+승인 반영으로 요구사항이 추가된 직후라면 트리거를 확인한다. Must 개수 ±20% 또는 복잡도 L 2배 이상이면 **plan 스킬 회귀**를 제안한다.
 
 ### 위임
 
 사전 점검 통과 시, project-agent를 생성한다:
 - subagent_type: `project-agent`
 - 전달: 스킬 `analyze`, 경로 `.claude/skills/analyze/SKILL.md`
+- **함께 전달**: `.claude/skills/_shared/execution-contract.md` 경로와 "이 계약을 먼저 읽고 실행하라"는 지시
 
 ### 완료 후
 
-project-agent 완료 시:
+project-agent 완료 시, **아래 검증을 통과하기 전에는 결과를 전달하지 않는다.**
+
+**1. 결정 전파 잔여 확인 (계약 §2)**
+
+승인·결정을 반영한 경우, 옛 표기가 남아 있지 않은지 전수 검색한다.
+
+```bash
+grep -rn "<바뀐 옛 표기>" docs/    # 출력이 비어야 통과
+```
+
+**"변경 예정" · "반영 대기" · "개정 대상" 상태로 종료하지 않는다.** 이 상태는 다음 세션에서 잊힌다.
+
+**2. 이중 기록 검증 (계약 §3)**
+
+```bash
+find docs -name '*.md' ! -name 'CLAUDE.md' -exec grep -L 'Notion' {} +   # 출력이 비어야 통과
+```
+
+- Git `docs/` + Notion `02. 프로젝트 / ClaudeManager / 02. 분석` 양쪽에 존재
+- 각 문서 헤더에 `> **원본**: [Notion {코드}](url) · Git 동기화 {날짜}`
+- `docs/00-progress.md` 동기화 표 + Notion `00. 진행 상황` 갱신
+
+**3. 보고 전 산출물 검증 (계약 §4)**
+
+```bash
+for f in <보고서 ## 산출물 칸의 경로 전건>; do
+  [ -f "$f" ] && echo "OK   $f" || echo "MISSING $f"
+done
+```
+
+`MISSING`이 하나라도 있으면 **보고를 중단하고** 누락을 채운다. 채울 수 없으면 산출물 칸에서 지우고 `## 미해결 사항`으로 옮긴다.
+
+**4. 상태 파일 최종 갱신 (계약 §0)**
+
+`.orchestrator/status/analyze.json`에 `completed_steps` 전건과 `artifacts`(code / git / notion 3필드)를 기록한다.
+
+**5. 결과 전달 및 전환**
+
 1. 결과를 대표에게 전달
 2. 다음 스킬 전환 정보에 따라:
    - 자동 → 해당 스킬 즉시 실행

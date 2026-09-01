@@ -4,7 +4,7 @@ description: >
   기능을 개발한다. "개발해줘", "구현해줘", "만들어줘", "코딩해줘"
   등의 요청 시 사용한다. TDD(Red-Green-Refactor) + Clean Code 원칙 기반으로
   설계서를 구현하고, 단위 테스트를 작성한다.
-version: 2.0
+version: 2.1
 triggers:
   - 개발
   - 구현
@@ -17,22 +17,97 @@ triggers:
 
 ## 디스패치
 
-### 사전 점검
+> **필수 선행**: 이 스킬을 실행하기 전에 `.claude/skills/_shared/execution-contract.md`(실행 계약)를 읽는다.
+> 아래는 그 계약의 이 스킬용 요약이다. **상세 규칙과 금지 사항은 계약 문서가 기준이며, 충돌 시 계약이 우선한다.**
 
-1. DES-001~009 존재 여부: `ls docs/design/ docs/design/api/ docs/design/data/ docs/design/ui/ 2>/dev/null`
-2. 현재 브랜치 확인: `git branch --show-current`
+### 0단계: 재개 확인 (계약 §0)
 
-누락 산출물이 있으면 design 스킬 회귀를 제안한다.
+가장 먼저 `.orchestrator/status/develop.json`을 읽는다.
+
+- 없으면 생성하고 `current_step: 1`로 시작한다
+- 있으면 `completed_steps`의 **다음 단계부터** 재개한다
+- **`completed_steps`에 없는 단계를 수행했다고 가정하지 않는다**
+- 각 단계 종료 시 즉시 갱신한다 (몰아서 기록 금지)
+
+### 사전 점검 — 3단 검증 (계약 §1)
+
+**L1 — 존재**
+
+```bash
+ls docs/design/ docs/design/api/ docs/design/data/ docs/design/ui/ 2>/dev/null
+git branch --show-current
+```
+
+**L2 — 내용**
+
+```bash
+for f in docs/design/des-*.md docs/design/*/des-*.md; do [ -s "$f" ] || echo "EMPTY: $f"; done
+# 구현에 필요한 최소 정보가 실제로 있는가
+grep -cE '^\s*\|?\s*(GET|POST|PUT|PATCH|DELETE)\s' docs/design/api/des-002-api-spec.md   # 엔드포인트
+grep -c 'erDiagram\|CREATE TABLE'                   docs/design/data/des-003-data-model.md  # ERD/스키마
+grep -L 'Notion' docs/design/*.md docs/design/*/*.md
+```
+
+**설계서가 있어도 엔드포인트·스키마가 0건이면 구현할 수 없다.** 이 경우 L2 실패로 판정한다.
+
+**L3 — 정합**
+
+```bash
+find docs/design -name 'des-*.md' | wc -l                                    # 실제
+grep -oE 'DES-0[0-9]{2}' docs/plans/pln-002-phase1-plan.md | sort -u | wc -l # 계획
+```
+
+**판정**: L1 실패 → design 스킬 회귀 제안(진행 차단) · L2 실패 → 해당 설계서 회귀(진행 차단) · L3 편차 → 대표 보고(차단 없음)
+
+`ls`가 성공했다는 이유만으로 통과 처리하지 않는다.
 
 ### 위임
 
 사전 점검 통과 시, project-agent를 생성한다:
 - subagent_type: `project-agent`
 - 전달: 스킬 `develop`, 경로 `.claude/skills/develop/SKILL.md`
+- **함께 전달**: `.claude/skills/_shared/execution-contract.md` 경로와 "이 계약을 먼저 읽고 실행하라"는 지시
 
 ### 완료 후
 
-project-agent 완료 시:
+project-agent 완료 시, **아래 검증을 통과하기 전에는 결과를 전달하지 않는다.**
+
+**1. 결정 전파 잔여 확인 (계약 §2)**
+
+승인·결정을 반영한 경우, 옛 표기가 남아 있지 않은지 전수 검색한다.
+
+```bash
+grep -rn "<바뀐 옛 표기>" docs/    # 출력이 비어야 통과
+```
+
+**"변경 예정" · "반영 대기" · "개정 대상" 상태로 종료하지 않는다.** 이 상태는 다음 세션에서 잊힌다.
+
+**2. 이중 기록 검증 (계약 §3)**
+
+```bash
+find docs -name '*.md' ! -name 'CLAUDE.md' -exec grep -L 'Notion' {} +   # 출력이 비어야 통과
+```
+
+- Git `docs/` + Notion `02. 프로젝트 / ClaudeManager / 04. 개발` 양쪽에 존재
+- 각 문서 헤더에 `> **원본**: [Notion {코드}](url) · Git 동기화 {날짜}`
+- `docs/00-progress.md` 동기화 표 + Notion `00. 진행 상황` 갱신
+
+**3. 보고 전 산출물 검증 (계약 §4)**
+
+```bash
+for f in <보고서 ## 산출물 칸의 경로 전건>; do
+  [ -f "$f" ] && echo "OK   $f" || echo "MISSING $f"
+done
+```
+
+`MISSING`이 하나라도 있으면 **보고를 중단하고** 누락을 채운다. 채울 수 없으면 산출물 칸에서 지우고 `## 미해결 사항`으로 옮긴다.
+
+**4. 상태 파일 최종 갱신 (계약 §0)**
+
+`.orchestrator/status/develop.json`에 `completed_steps` 전건과 `artifacts`(code / git / notion 3필드)를 기록한다.
+
+**5. 결과 전달 및 전환**
+
 1. 결과를 대표에게 전달
 2. 다음 스킬 전환 정보에 따라:
    - 자동 → 해당 스킬 즉시 실행
