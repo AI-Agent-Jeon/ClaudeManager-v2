@@ -74,7 +74,7 @@ Git `docs/analysis/`가 비어 있던 것은 **동기화 누락**이며 프로�
 |------|--------|------|
 | plan | PLN-001~005 | ✅ 완료 |
 | analyze | ANL-001~004 | ✅ 완료 |
-| design | DES-001~015 | 🟡 진행 중 — 승인 완료, 개정 대기 |
+| design | DES-001~015 | 🟢 **Phase 1분 완료** — Phase 2 웹 UI 4건 선행 설계만 남음 |
 | develop | DEV-001~005 | ⬜ 대기 |
 | test | TST-001~007 | ⬜ 대기 |
 | deploy | DPL-001~004 | ⬜ 대기 |
