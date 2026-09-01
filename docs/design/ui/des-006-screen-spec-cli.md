@@ -2,8 +2,8 @@
 
 > Phase 1: 기반 구축
 > 문서코드: DES-006
-> 버전: v2 (2026-09-01) — 인터랙션 명세 규격 적용
-> 대상: CLI 19개 화면
+> 버전: **v3 (2026-09-01)** — 대화·승인·진행 13화면 추가 (D-09 · D-16)
+> 대상: **CLI 32개 화면** (기존 19 + 대화·승인·진행 13)
 > **원본**: [Notion DES-006](https://app.notion.com/p/3c5d066504ec8137980bee851fb061a3) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -62,6 +62,21 @@ CLI에는 버튼·모달이 없다. 아래 대응 관계로 GUI 명세 구조를
 | SCR-T03 | `cm task status <id>` | Task 상세 | FR-008 | 필요 |
 | SCR-T04 | `cm task status <id> --set` | Task 상태 변경 | FR-008 | 필요 |
 | SCR-SC01 | `cm status-changes` | 상태 변경 이력 | FR-009 | 필요 |
+| **SCR-CH01** | `cm chat main` | Main과 대화 (REPL) | **FR-026, FR-027** | 필요 |
+| **SCR-CH02** | `cm chat agent <id>` | Agent와 대화 (REPL) | **FR-026, FR-027** | 필요 |
+| **SCR-CH03** | `cm chat send <채널> "<본문>"` | 비대화형 1회 전송 | **FR-027** | 필요 |
+| **SCR-CH04** | `cm inbox` | 미응답 의사결정 목록 | **FR-028** | 필요 |
+| **SCR-CH05** | `cm decide <id> --approve|--reject` | 의사결정 응답 | **FR-028** | 필요 |
+| **SCR-CH06** | `cm progress` | Phase 진행 보드 + WIP 검사 | **FR-029** | 필요 |
+| **SCR-CH07** | `cm approvals [--pending|--resolved]` | 승인함 목록 | **FR-028** | 필요 |
+| **SCR-CH08** | `cm review <id>` | 승인 건 상세 (안건·산출물·근거·영향) | **FR-028** | 필요 |
+| **SCR-CH09** | `cm stage start <skill>` | 단계 착수 (게이트 3단 검증) | **FR-030** | 필요 |
+| **SCR-CH10** | `cm artifacts [--sync <상태>]` | 산출물 + 동기화 상태 | **FR-031** | 필요 |
+| **SCR-CH11** | `cm chat list [--type|--status]` | 대화 채널 목록 (아카이브 포함) | **FR-026** | 필요 |
+| **SCR-CH12** | `cm chat log <채널id> [--since]` | 대화 본문 출력·내보내기 | **FR-027** | 필요 |
+| **SCR-CH13** | `cm chat search "<검색어>"` | 전 채널 전문 검색 (FTS5) | **FR-027** | 필요 |
+
+**합계 32화면** — 기존 19 + 대화·승인·진행 13 (v3 신규). PLN-002 v3 "CLI 화면 19 → 32"와 일치한다.
 
 ---
 
@@ -174,6 +189,67 @@ CLI에는 버튼·모달이 없다. 아래 대응 관계로 GUI 명세 구조를
 | EVT-SC01-1 | SCR-T04 | `cm status-changes --entity-id` | 이력 ≥1 | 출력전환 | SCR-SC01 | 표(시각·엔티티·From·To·변경자) + 페이지 | GET /api/status-changes |
 | EVT-SC01-2 | — | `cm status-changes` (무필터) | — | 출력전환 | SCR-SC01 | 표 + **ID 컬럼 추가** + 페이지 | GET /api/status-changes |
 | EVT-SC01-3 | — | 이력 없는 엔티티 | — | 출력전환 | SCR-SC01 | "상태 변경 이력이 없습니다" | GET /api/status-changes |
+
+---
+
+### 4-5. 대화 · 승인 · 진행 — **v3 신규 (13화면)**
+
+> D-09(대화) · D-16(승인 게이트) 승인으로 Phase 1에 편입. DES-013 §5 · DES-014 §6 정의를 인터랙션 규격으로 옮긴다.
+
+#### 대화 (SCR-CH01~03 · 11~13)
+
+| 이벤트 ID | 화면 | 트리거 | 사전 조건 | 결과 유형 | 대상 | 표시 데이터 | API |
+|-----------|------|--------|----------|----------|------|-----------|-----|
+| EVT-CH01-1 | — | `cm chat main` | 인증됨 | 출력전환 | SCR-CH01 | 최근 메시지 20건 + REPL 프롬프트 `>` | GET /api/conversations/:id/messages |
+| EVT-CH01-2 | SCR-CH01 | 본문 입력 후 Enter | 채널 `active` | 인라인추가 | SCR-CH01 | 우측 정렬 `[대표]` 1행 + 전송 표시 | POST /api/conversations/:id/messages |
+| EVT-CH01-3 | SCR-CH01 | 서버 푸시 도착 | WS 연결됨 | 인라인추가 | SCR-CH01 | 좌측 `[Main]` 또는 `[Agent]` 메시지. MSG-03은 **4단 접기** | WS /ws/conversations/:id |
+| EVT-CH01-4 | SCR-CH01 | MSG-04 도착 | — | 경고블록 | SCR-CH01 | ⚠ 의사결정 요청 카드 + 선택지 + `cm decide <id>` 안내 | WS |
+| EVT-CH01-5 | SCR-CH01 | `Ctrl+D` 또는 `/exit` | — | 요약토스트 | — | ✓ 세션 종료, 전송 n건 | — |
+| EVT-CH01-6 | SCR-CH01 | WS 연결 끊김 | — | 경고블록 | SCR-CH01 | ⚠ 재연결 중… (지수 백오프). 복구 시 **REST로 누락 보충** | GET messages |
+| EVT-CH02-1 | — | `cm chat agent <id>` | Agent 존재, 채널 `active` | 출력전환 | SCR-CH02 | Agent명·상태 헤더 + 최근 20건 + REPL | GET /api/conversations |
+| EVT-CH02-2 | — | `cm chat agent <id>` | 채널 `readonly`·`archived` | 출력전환 + 경고블록 | SCR-CH02 | 전체 로그 + "종료된 채널입니다 (읽기 전용)". **입력창 없음** | GET messages |
+| EVT-CH03-1 | — | `cm chat send main "<본문>"` | 인증됨 | 요약토스트 | — | ✓ 전송 완료 + 메시지 ID 축약 | POST messages |
+| EVT-CH03-2 | — | `cm chat send` | 채널 `archived` | 요약토스트 | — | ✗ `CONVERSATION_ARCHIVED` — "종료된 채널에는 보낼 수 없습니다" | POST messages |
+| EVT-CH11-1 | — | `cm chat list` | 인증됨 | 출력전환 | SCR-CH11 | 채널ID·유형·제목·상태·미읽음·최근시각. **archived는 dim** | GET /api/conversations |
+| EVT-CH11-2 | — | `cm chat list --status archived` | — | 출력전환 | SCR-CH11 | 보관 채널만. **삭제된 Agent 이름이 스냅샷에서 표시됨** | GET /api/conversations |
+| EVT-CH12-1 | — | `cm chat log <채널id>` | 채널 존재 | 출력전환 | SCR-CH12 | 전체 메시지 시간순. `--since` 시 필터 | GET messages |
+| EVT-CH12-2 | — | `cm chat log <채널id> --export` | — | 요약토스트 | — | ✓ 마크다운 파일 저장 경로 | GET /api/conversations/:id/export |
+| EVT-CH13-1 | — | `cm chat search "<검색어>"` | 2자 이상 | 출력전환 | SCR-CH13 | 채널명·시각·**하이라이트 스니펫**. 결과 0건 시 안내 | GET /api/conversations/search |
+| EVT-CH13-2 | — | `cm chat search "<1자>"` | — | 요약토스트 | — | ✗ "검색어는 2자 이상이어야 합니다" | — |
+
+#### 승인 (SCR-CH04·05·07·08)
+
+| 이벤트 ID | 화면 | 트리거 | 사전 조건 | 결과 유형 | 대상 | 표시 데이터 | API |
+|-----------|------|--------|----------|----------|------|-----------|-----|
+| EVT-CH04-1 | — | `cm inbox` | 인증됨 | 출력전환 | SCR-CH04 | **등급·안건·경과시간·기한** + 응답 명령 안내. 기한순 정렬 | GET /api/approvals?status=pending |
+| EVT-CH04-2 | — | `cm inbox` | 미응답 0건 | 출력전환 | SCR-CH04 | "대기 중인 의사결정이 없습니다" | GET approvals |
+| EVT-CH04-3 | SCR-CH04 | 높음 등급 존재 | — | 경고블록 | SCR-CH04 | ⚠ "무기한 대기 — 대표 처리 전까지 Agent가 멈춰 있습니다" | — |
+| EVT-CH07-1 | — | `cm approvals --pending` | 인증됨 | 출력전환 | SCR-CH07 | 유형(APV-*)·등급·안건·상태·경과 | GET /api/approvals |
+| EVT-CH07-2 | — | `cm approvals --resolved` | — | 출력전환 | SCR-CH07 | 처리 이력 + **결정·사유·처리시각** | GET /api/approvals |
+| EVT-CH08-1 | — | `cm review <id>` | 승인 건 존재 | 출력전환 | SCR-CH08 | **안건·선택지·권고·근거·산출물(동기화 상태 포함)·영향 범위** | GET /api/approvals/:id |
+| EVT-CH08-2 | SCR-CH08 | 산출물에 `notion_only` 존재 | — | 경고블록 | SCR-CH08 | ⚠ "Git 동기화 누락 n건" — **프로세스 위반 아님을 명시** | — |
+| EVT-CH08-3 | — | `cm review <없는id>` | — | 요약토스트 | — | ✗ `APPROVAL_NOT_FOUND` | GET approvals/:id |
+| EVT-CH05-1 | — | `cm decide <id> --approve` | `pending` | 요약토스트 + 후속안내 | — | ✓ 승인 완료 + **Agent 재개 안내**. APV-GATE면 다음 단계명 | POST /api/approvals/:id/resolve |
+| EVT-CH05-2 | — | `cm decide <id> --reject --reason "<사유>"` | `pending` | 요약토스트 | — | ✓ 반려 완료 + **"Agent는 대기 상태를 유지합니다"** | POST resolve |
+| EVT-CH05-3 | — | `cm decide <id> --reject` (사유 없음) | — | 요약토스트 | — | ✗ `APPROVAL_REASON_REQUIRED` — "반려는 사유가 필요합니다" | POST resolve |
+| EVT-CH05-4 | — | `cm decide <id> --approve` | 이미 처리됨 | 요약토스트 | — | ✗ `APPROVAL_ALREADY_RESOLVED` + 기존 결정·처리시각 | POST resolve |
+| EVT-CH05-5 | — | `cm decide <id>` (플래그 없음) | `pending` | **프롬프트** | **PRM-CH01** | 안건 요약 + 선택지 + [승인/반려/취소] | — |
+
+#### 진행 (SCR-CH06·09·10)
+
+| 이벤트 ID | 화면 | 트리거 | 사전 조건 | 결과 유형 | 대상 | 표시 데이터 | API |
+|-----------|------|--------|----------|----------|------|-----------|-----|
+| EVT-CH06-1 | — | `cm progress` | 인증됨 | 출력전환 | SCR-CH06 | **7단계 보드**(상태·산출물수·승인대기수) + 게이트 위치 + 현재 단계 | GET /api/phases/current |
+| EVT-CH06-2 | SCR-CH06 | WIP 위반 존재 | — | 경고블록 | SCR-CH06 | ⚠ WIP 위반 목록 + 면제 여부 + `cm progress --waive` 안내 | GET phases/current |
+| EVT-CH06-3 | SCR-CH06 | 게이트 미통과 | — | 경고블록 | SCR-CH06 | ⚠ "plan → analyze 게이트가 통과된 기록이 없습니다" | — |
+| EVT-CH09-1 | — | `cm stage start <skill>` | 3단 검증 통과 | 요약토스트 + 후속안내 | — | ✓ 단계 착수 + 시작시각 | POST /api/stages/:id/start |
+| EVT-CH09-2 | — | `cm stage start <skill>` | 게이트 미통과 | 요약토스트 + 후속안내 | — | ✗ `GATE_NOT_PASSED` + **필요한 승인 ID** + `cm review <id>` | POST stages/start |
+| EVT-CH09-3 | — | `cm stage start <skill>` | 직전 단계 미완료 | 요약토스트 | — | ✗ `INVALID_TRANSITION` + 직전 단계명·현재 상태 | POST stages/start |
+| EVT-CH09-4 | — | `cm stage start <skill>` | WIP 위반, 면제 없음 | 요약토스트 + 후속안내 | — | ✗ `WIP_VIOLATION` + 진행 중 단계명 + `cm progress --waive` | POST stages/start |
+| EVT-CH10-1 | — | `cm artifacts` | 인증됨 | 출력전환 | SCR-CH10 | 코드·제목·상태·**Notion/Git 동기화 상태** | GET /api/artifacts |
+| EVT-CH10-2 | — | `cm artifacts --sync notion_only` | — | 출력전환 | SCR-CH10 | 한쪽에만 있는 산출물만 필터 | GET artifacts |
+
+> **`cm decide`의 후속 안내가 중요하다.** 승인 후 무엇이 일어나는지(Agent 재개 / 다음 단계 시작)를 알려주지 않으면 대표는 "눌렀는데 뭐가 됐지?"가 된다. 반려 시 **Agent가 대기 상태를 유지한다**는 점도 반드시 알린다 (DES-007 v2 §3-2).
 
 ---
 
@@ -327,7 +403,9 @@ ready → cancelled                               (취소)
 
 | 점검 항목 | 확인 |
 |----------|------|
-| 19개 화면이 모두 §3 표시 데이터에 정의되었는가 | ✅ |
+| 기존 19개 화면이 §3 표시 데이터에 정의되었는가 | ✅ |
+| **신규 13개 화면(SCR-CH01~13)이 §4-5 인터랙션에 정의되었는가** | ✅ **v3** |
+| **신규 13개 화면의 §3 표시 데이터 정의** | ⬜ **미작성** — §미해결 참조 |
 | 모든 명령·옵션이 §4 인터랙션 표에 1행 이상 있는가 | ✅ |
 | 모든 대화형 프롬프트가 PRM-xx로 정의되고 취소 경로가 있는가 | ✅ |
 | `표시 데이터`가 필드명 단위로 적혔는가 | ✅ |
@@ -351,9 +429,19 @@ ready → cancelled                               (취소)
 
 ---
 
+## 미해결 사항
+
+| 항목 | 내용 | 등급 | 처리 시점 |
+|------|------|:---:|----------|
+| **SCR-CH01~13 표시 데이터 정의** | §4-5에 **인터랙션(무엇을 입력하면 무엇이 뜨는가)**은 정의했으나, §3 형식의 **출력 필드 전건 목록**은 아직 없다. DES-002 v2 응답 스키마에서 도출 가능하다 | **보통** | develop 착수 전 |
+| **REPL 세션 상태 관리** | `cm chat`은 CLI 유일의 **장기 실행 세션**이다. WS 재연결·Ctrl+C 처리·터미널 리사이즈 동작이 §8 공통 규칙에 없다 | 낮음 | develop |
+
+---
+
 ## 변경 이력
 
 | 버전 | 날짜 | 내용 |
 |------|------|------|
 | v1 | 2026-08-24 | 최초 작성 — 화면 인벤토리 + 입력/출력 + 네비게이션 맵 |
 | v2 | 2026-09-01 | 인터랙션 명세(§4) · 프롬프트 명세(§5) · 전이 매트릭스(§6) 추가, 표시 데이터 필드 단위 확정, 화면 수 19개로 정정 |
+| **v3** | 2026-09-01 | **대화·승인·진행 13화면 추가** (SCR-CH01~13) — D-09·D-16 승인 반영. 화면 19 → **32개**.<br>§4-5 인터랙션 명세 신규(이벤트 30건), 화면 인벤토리 확장. `cm decide` 후속 안내에 **Agent 재개 여부**를 표시하도록 규정(반려 시 대기 유지). `cm review`에 **동기화 누락이 프로세스 위반이 아님**을 명시하는 경고블록 추가 |
