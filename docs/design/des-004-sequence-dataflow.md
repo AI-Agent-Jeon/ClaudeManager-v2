@@ -2,12 +2,12 @@
 
 > Phase 1: 기반 구축
 > 문서코드: DES-004
-> 작성일: 2026-08-24
+> 버전: **v2 (2026-09-01)** — 대화·승인·진행 타입 및 시퀀스 4종 추가
 > **원본**: [Notion DES-004](https://app.notion.com/p/3c5d066504ec81d08e30df63322e4e98) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
 > **📌 이 문서가 develop의 실질적 계약서다.**
-> DES-002(API 명세서)에는 엔드포인트 목록만 있고 요청/응답 스키마가 없다. **실제 타입 정의와 함수 시그니처는 본 문서에 있다.**
+> **실제 타입 정의와 함수 시그니처는 본 문서에 있다.** DES-002 v2 §6의 JSON Schema 도출 규칙이 이 타입들을 입력으로 삼는다 — 여기 없는 타입은 Fastify 스키마를 만들 수 없다.
 > dev-sub는 이 문서의 함수 시그니처와 데이터 변환을 그대로 구현한다.
 
 > **⚠ 번호 충돌 (D-08 승인)**: `design` 스킬은 DES-004를 "와이어프레임"으로 정의하나 실제로는 "시퀀스 다이어그램"이다. D-08 승인에 따라 **와이어프레임은 DES-012가 흡수**하고 **스킬 정의를 수정**한다.
@@ -57,6 +57,258 @@ interface ErrorResponse {
   message: string;
   code: string;
 }
+```
+
+---
+
+## 공통 타입 정의 — v2 추가 (대화 · 승인 · 진행)
+
+> **DES-002 v2 §6의 JSON Schema 도출 규칙이 이 타입들을 입력으로 삼는다.** 여기 없는 타입은 Fastify 스키마를 만들 수 없다.
+> 대응 테이블 정의는 DES-003 v2 §3·§4.
+
+### 커서 페이지네이션 (메시지 전용)
+
+```typescript
+interface CursorResponse<T> {
+  data: T[];
+  cursor: {
+    next: string | null;   // Base64(created_at + id)
+    hasMore: boolean;
+  };
+}
+```
+
+> 메시지는 `PaginatedResponse`를 쓰지 않는다. 오프셋 방식은 스크롤 도중 새 메시지가 들어오면 오프셋이 밀려 **같은 메시지가 중복 표시된다** (DES-002 v2 §2-3).
+
+### 대화 (FR-026 · FR-027)
+
+```typescript
+type ChannelType         = 'main' | 'agent';
+type ConversationStatus  = 'active' | 'readonly' | 'archived';
+type MsgType             = 'MSG-01' | 'MSG-02' | 'MSG-03' | 'MSG-04' | 'MSG-05' | 'MSG-06';
+type SenderRole          = 'ceo' | 'main' | 'agent' | 'system';
+
+// 삭제된 Agent의 정보 보존용 (D-27)
+interface EntitySnapshot {
+  agentName: string;
+  projectName: string;
+  agentType: string;
+}
+
+interface Conversation {
+  id: string;
+  channelType: ChannelType;
+  entityId: string | null;              // agents.id — FK 아님 (D-27)
+  status: ConversationStatus;
+  entitySnapshot: EntitySnapshot | null;
+  title: string;                        // 파생: entitySnapshot ?? agents 조인
+  unreadCount: number;                  // 파생
+  lastMessageAt: string | null;
+  createdAt: string;
+  archivedAt: string | null;
+}
+
+// MSG-03 전용 — CLAUDE.md 보고 형식 4단을 그대로 구조화
+interface StructuredReport {
+  summary: string;      // ## 요약
+  workDone: string;     // ## 수행 내용
+  artifacts: string[];  // ## 산출물
+  openIssues: string;   // ## 미해결 사항
+}
+
+interface Message {
+  id: string;
+  conversationId: string;
+  msgType: MsgType;
+  senderRole: SenderRole;
+  body: string;
+  structured: StructuredReport | null;  // msgType === 'MSG-03'일 때만
+  approvalId: string | null;            // msgType === 'MSG-04'일 때만
+  createdAt: string;
+}
+
+// msgType·senderRole은 서버가 고정한다. 클라이언트가 지정할 수 없다
+interface SendMessageInput {
+  body: string;                         // 1~10000자
+}
+
+interface ListConversationsOpts {
+  type?: ChannelType;
+  status?: ConversationStatus;          // 기본 'active'
+  project?: string;
+  from?: string;
+  to?: string;
+}
+
+interface ListMessagesOpts {
+  cursor?: string;
+  limit?: number;                       // 1~100, 기본 50
+  direction?: 'before' | 'after';       // 기본 'before'
+}
+
+interface SearchMessagesOpts {
+  q: string;                            // 2자 이상
+  type?: ChannelType;
+  status?: ConversationStatus;
+  from?: string;
+  to?: string;
+  limit?: number;                       // 1~50, 기본 20
+}
+
+interface SearchResult {
+  messageId: string;
+  conversationId: string;
+  conversationTitle: string;
+  snippet: string;                      // FTS5 snippet() — <mark> 포함
+  createdAt: string;
+}
+```
+
+### 승인 (FR-028 · FR-030)
+
+```typescript
+type ApprovalType   = 'APV-GATE' | 'APV-ARCH' | 'APV-DEPLOY'
+                    | 'APV-EXT'  | 'APV-CHOICE' | 'APV-RETRY';
+type DecisionLevel  = 'high' | 'medium';        // 'low'는 적재하지 않는다
+type ApprovalStatus = 'pending' | 'approved' | 'rejected'
+                    | 'conditional' | 'auto_advanced';
+
+interface ApprovalOption {
+  code: string;             // 'A', 'B' …
+  label: string;
+  recommended?: boolean;
+}
+
+interface ApprovalImpact {
+  documents: string[];      // 영향받는 산출물 코드
+  reversible: boolean;      // 되돌릴 수 있는가
+}
+
+interface ApprovalSummary {
+  id: string;
+  approvalType: ApprovalType;
+  level: DecisionLevel;
+  subject: string;
+  requestedBy: string;              // agent id 또는 'main'
+  status: ApprovalStatus;
+  deadlineAt: string | null;        // high는 항상 null (무기한)
+  elapsedSeconds: number;           // 파생 — 승인함 "경과 시간"
+  remainingSeconds: number | null;  // 파생 — 승인함 "기한"
+  createdAt: string;
+}
+
+interface ApprovalDetail extends ApprovalSummary {
+  options: ApprovalOption[];
+  artifacts: ArtifactRef[];
+  rationale: string | null;
+  impact: ApprovalImpact | null;
+  messageId: string | null;
+  stageId: string | null;
+  resolution: string | null;
+  reason: string | null;
+  resolvedAt: string | null;
+}
+
+// 'auto_advanced'와 'pending'은 없다 — 타임아웃 자동 진행은 스케줄러 전용
+interface ResolveApprovalInput {
+  status: 'approved' | 'rejected' | 'conditional';
+  resolution?: string | null;
+  reason?: string | null;           // rejected·conditional이면 필수 (S-2)
+}
+
+interface ListApprovalsOpts {
+  status?: ApprovalStatus;
+  level?: DecisionLevel;
+  type?: ApprovalType;
+  sort?: 'deadline' | 'created';    // 기본 'deadline'
+}
+```
+
+### 진행 (FR-029 · FR-031)
+
+```typescript
+type SkillName      = 'plan' | 'analyze' | 'design' | 'develop'
+                    | 'test' | 'deploy' | 'operate';
+type StageStatus    = 'pending' | 'in_progress' | 'completed';
+type ArtifactStatus = 'draft' | 'review' | 'approved';
+type SyncStatus     = 'synced' | 'notion_only' | 'git_only' | 'missing';
+
+// 저장하지 않고 notionUrl·gitPath 유무에서 파생한다 (DES-003 v2 §4-4)
+interface ArtifactRef {
+  code: string;
+  title: string;
+  notionUrl: string | null;
+  gitPath: string | null;
+  syncStatus: SyncStatus;
+}
+
+interface Artifact extends ArtifactRef {
+  id: string;
+  stageId: string;
+  status: ArtifactStatus;
+  updatedAt: string;
+}
+
+interface GateInfo {
+  required: boolean;          // 파생 — CLAUDE.md 스킬 전환 모드
+  approvalId: string | null;
+  passed: boolean;
+}
+
+interface StageSummary {
+  id: string;
+  skill: SkillName;
+  status: StageStatus;
+  startedAt: string | null;
+  completedAt: string | null;
+  artifactCount: number;          // 집계
+  pendingApprovalCount: number;   // 집계
+  gate: GateInfo;
+}
+
+interface WipViolation {
+  rule: string;
+  detail: string;
+  waived: boolean;
+}
+
+interface PhaseCurrent {
+  phase: {
+    id: string;
+    number: number;
+    name: string;
+    currentStage: SkillName | null;
+  };
+  stages: StageSummary[];         // 항상 7개
+  wipViolations: WipViolation[];  // 저장하지 않고 조회 시점 계산
+}
+
+interface CreateWipWaiverInput {
+  phaseId: string;
+  rule: string;
+  reason: string;                 // 필수. 빈 문자열 불가
+}
+```
+
+### WebSocket 이벤트
+
+```typescript
+interface WsEnvelope<T> {
+  event: string;
+  data: T;
+}
+
+// WS /ws/conversations/:id
+type ConversationEvent =
+  | WsEnvelope<Message>              // 'message:new'
+  | WsEnvelope<{ senderRole: SenderRole }>  // 'message:typing'
+  | WsEnvelope<ApprovalSummary>;     // 'approval:updated'
+
+// WS /ws
+type GlobalEvent =
+  | WsEnvelope<StatusChange>         // 'status:changed'
+  | WsEnvelope<ApprovalSummary>      // 'approval:created' | 'approval:updated'
+  | WsEnvelope<StageSummary>;        // 'stage:changed'
 ```
 
 ---
@@ -715,7 +967,7 @@ interface StatusChange {
 
 ---
 
-## 13. Agent 삭제 (FR-007)
+## 13. Agent 삭제 (FR-007) — **v2 개정 (D-27)**
 
 ```mermaid
 sequenceDiagram
@@ -724,6 +976,7 @@ sequenceDiagram
     participant R as agents.routes
     participant S as AgentService
     participant AR as AgentRepo
+    participant CS as ConversationService
     participant DB as SQLite
 
     CLI->>AC: apiClient.deleteAgent(id)
@@ -734,15 +987,226 @@ sequenceDiagram
         AR-->>S: null
         S-->>R: throw AGENT_NOT_FOUND
     else Agent 존재
+        Note over S,DB: 아래 2단계는 하나의 트랜잭션
+        S->>CS: conversationService.archiveByEntity(id, snapshot)
+        CS->>DB: UPDATE conversations SET status='archived',<br>entity_snapshot=?, archived_at=? WHERE entity_id=?
+        Note over DB: 대화·메시지는 삭제되지 않는다 (D-27)
         S->>AR: agentRepo.deleteById(id)
         AR->>DB: DELETE FROM agents WHERE id = ?
-        Note over DB: CASCADE: tasks 자동 삭제<br>status_changes는 남음 (FK 없음)
-        R-->>AC: 204 No Content
-        CLI->>CLI: 콘솔 "✓ Agent 삭제 완료"
+        Note over DB: CASCADE: tasks 삭제<br>status_changes 유지 (FK 없음)<br>conversations 유지 (FK 없음)
+        R-->>AC: 200 { data: { archivedConversationId } }
+        CLI->>CLI: 콘솔 "✓ Agent 삭제 완료 (대화 1건 보관됨)"
     end
 ```
 
-> **⚠ D-27 승인에 따른 변경 필요**: Agent 삭제 시 대화(`conversations`)는 **CASCADE 삭제하지 않고** `archived`로 전환해야 한다. DES-013 §2 참조.
+**v1과의 차이**: v1은 대화를 CASCADE 삭제했다. v2는 **삭제 전에 스냅샷을 남기고 아카이브로 전환**한다.
+
+```typescript
+// 삭제 직전에 만든다 — Agent 행이 사라지면 이름을 얻을 수 없다
+const snapshot: EntitySnapshot = {
+  agentName:   agent.name,
+  projectName: project.name,
+  agentType:   agent.type,
+};
+```
+
+> **순서가 중요하다.** `agents` 행을 먼저 지우면 스냅샷을 만들 수 없다. 아카이브 → 삭제 순서를 반드시 지킨다.
+
+---
+
+## 14. 대화 송수신 (FR-026 · FR-027) — **v2 신규**
+
+```mermaid
+sequenceDiagram
+    participant CLI as CLI (cm chat)
+    participant AC as ApiClient
+    participant R as conversations.routes
+    participant S as ConversationService
+    participant CR as ConversationRepo
+    participant MR as MessageRepo
+    participant WS as WebSocket Hub
+    participant DB as SQLite
+
+    CLI->>AC: apiClient.sendMessage(convId, { body })
+    AC->>R: POST /api/conversations/:id/messages
+    Note over R: JSON Schema 검증<br>additionalProperties false —<br>senderRole 주입 차단
+    R->>S: conversationService.sendMessage(convId, input)
+    S->>CR: conversationRepo.findById(convId)
+    alt 채널 없음
+        CR-->>S: null
+        S-->>R: throw CONVERSATION_NOT_FOUND
+    else status가 active 아님
+        CR-->>S: archived 채널
+        S-->>R: throw CONVERSATION_ARCHIVED
+    else 발화 가능
+        S->>MR: messageRepo.insert(MSG-01 / senderRole ceo / body)
+        MR->>DB: INSERT INTO messages …
+        Note over DB: 트리거가 messages_fts 자동 갱신
+        MR-->>S: Message
+        S->>WS: hub.broadcast(convId, message:new)
+        R-->>AC: 201 { data: Message }
+        CLI->>CLI: 대화창에 우측 정렬 버블 렌더
+    end
+```
+
+**메시지 조회 (커서 페이지네이션)**
+
+```mermaid
+sequenceDiagram
+    participant AC as ApiClient
+    participant S as ConversationService
+    participant MR as MessageRepo
+    participant DB as SQLite
+
+    AC->>S: listMessages(convId, cursor / limit 50 / direction before)
+    S->>S: decodeCursor(cursor) → createdAt + id
+    S->>MR: messageRepo.listByCursor(convId, decoded, limit+1)
+    MR->>DB: SELECT … WHERE conversation_id=?<br>AND (created_at, id) < (?, ?)<br>ORDER BY created_at DESC, id DESC LIMIT ?
+    Note over S: limit+1건 조회 →<br>초과분 유무로 hasMore 판정
+    S-->>AC: CursorResponse of Message
+```
+
+> `limit + 1`건을 조회해 **초과분이 있으면 `hasMore: true`**로 판정한다. 별도 COUNT 쿼리를 돌리지 않는다.
+
+---
+
+## 15. 의사결정 요청·응답 (FR-028) — **v2 신규**
+
+```mermaid
+sequenceDiagram
+    participant AG as Agent
+    participant AS as ApprovalService
+    participant MR as MessageRepo
+    participant AR as ApprovalRepo
+    participant CEO as 대표 (cm decide)
+    participant SS as StageService
+    participant WS as WebSocket Hub
+    participant DB as SQLite
+
+    Note over AG,DB: [1] 요청 — Agent가 발행
+    AG->>AS: approvalService.request(type / level / subject / options / rationale)
+    alt level이 low
+        AS-->>AG: 적재하지 않음 (status_changes에만 기록)
+    else level이 high 또는 medium
+        AS->>MR: messageRepo.insert(MSG-04 / senderRole agent)
+        MR-->>AS: Message
+        AS->>AR: approvalRepo.insert(messageId / deadlineAt 포함)
+        Note over AR: high → deadlineAt = null (무기한)<br>medium → now + 30분 (D-10)
+        AR->>DB: INSERT INTO approvals …
+        AS->>WS: broadcast approval:created
+        AS-->>AG: Agent 상태 → waiting
+    end
+
+    Note over CEO,DB: [2] 응답 — 대표가 처리
+    CEO->>AS: approvalService.resolve(id, status / resolution / reason)
+    AS->>AR: approvalRepo.findById(id)
+    alt 이미 처리된 건
+        AS-->>CEO: throw APPROVAL_ALREADY_RESOLVED
+    else 반려·조건부인데 reason 없음
+        AS-->>CEO: throw APPROVAL_REASON_REQUIRED
+    else APV-GATE에 auto_advanced 시도
+        AS-->>CEO: throw GATE_AUTO_ADVANCE_FORBIDDEN
+    else 처리 가능
+        Note over AS,DB: 아래 4단계는 하나의 트랜잭션
+        AS->>AR: update(status / resolution / reason / resolvedAt)
+        AS->>MR: insert(MSG-01 / senderRole ceo / 결정 내용)
+        opt approved 이고 APV-GATE
+            AS->>SS: stageService.markGatePassed(stageId)
+        end
+        opt rejected
+            AS->>AG: Agent 상태 waiting 유지 + 사유 전달
+        end
+        AS->>WS: broadcast approval:updated
+        AS-->>CEO: ApprovalDetail
+    end
+```
+
+> **대표의 결정은 반드시 `MSG-01`로 대화에 남는다.** 승인함에서 눌렀든 CLI로 처리했든 동일하다. "무엇을 언제 승인했는지"가 대화 기록에서 사라지면 안 된다.
+
+---
+
+## 16. 단계 착수 — 승인 게이트 검증 (FR-030) — **v2 신규**
+
+```mermaid
+sequenceDiagram
+    participant CLI as CLI (cm stage start)
+    participant R as stages.routes
+    participant SS as StageService
+    participant SR as StageRepo
+    participant AR as ApprovalRepo
+    participant WR as WipWaiverRepo
+    participant DB as SQLite
+
+    CLI->>R: POST /api/stages/:id/start
+    R->>SS: stageService.start(id)
+    SS->>SR: stageRepo.findById(id)
+    alt 단계 없음
+        SS-->>R: throw STAGE_NOT_FOUND
+    else 직전 단계가 completed 아님
+        SS-->>R: throw INVALID_TRANSITION
+    else 게이트 필요 단계
+        SS->>AR: findGateApproval(stageId)
+        Note over AR: WHERE stage_id=? AND<br>approval_type='APV-GATE'<br>ORDER BY created_at DESC LIMIT 1
+        alt 승인 없음 또는 approved 아님
+            SS-->>R: throw GATE_NOT_PASSED (403)
+        end
+    end
+    SS->>SR: countInProgress(phaseId)
+    alt WIP 1 위반
+        SS->>WR: findWaiver(phaseId, rule)
+        alt 면제 없음
+            SS-->>R: throw WIP_VIOLATION (409)
+        end
+    end
+    SS->>DB: UPDATE stages SET status='in_progress', started_at=?
+    SS->>DB: UPDATE phases SET current_stage=?
+    R-->>CLI: 200 { data: StageSummary }
+```
+
+> **이 시퀀스가 CLAUDE.md 스킬 전환 게이트의 유일한 강제 지점이다.**
+> 화면에서 버튼을 감추는 것으로는 강제되지 않는다. CLI·API 직접 호출도 같은 경로를 지나므로 여기서 막는다.
+> `gate.required`는 저장하지 않고 스킬 전환 모드에서 파생한다 — `plan→analyze`, `test→deploy`만 `true`.
+
+---
+
+## 17. 타임아웃 자동 진행 (D-10) — **v2 신규**
+
+```mermaid
+sequenceDiagram
+    participant T as ApprovalTimeoutJob<br>(서버 내부 스케줄러)
+    participant AR as ApprovalRepo
+    participant MR as MessageRepo
+    participant AG as Agent
+    participant WS as WebSocket Hub
+    participant DB as SQLite
+
+    loop 60초 주기
+        T->>AR: findExpired(now)
+        AR->>DB: SELECT … WHERE status='pending'<br>AND deadline_at IS NOT NULL<br>AND deadline_at <= ?
+        Note over DB: 부분 인덱스<br>approvals_deadline_idx 사용
+        loop 만료된 각 건
+            alt approvalType이 APV-GATE
+                T->>T: 건너뛴다 — 게이트는 자동 진행 불가
+            else
+                T->>AR: update(status auto_advanced / resolvedAt now)
+                T->>MR: insert(MSG-05 / senderRole system / 타임아웃 자동 진행)
+                T->>AG: Agent 재개
+                T->>WS: broadcast approval:updated
+            end
+        end
+    end
+```
+
+**핵심 규칙**
+
+| 항목 | 값 | 근거 |
+|------|-----|------|
+| 실행 주기 | 60초 | 30분 타임아웃에 충분한 해상도 |
+| 대상 | `status='pending'` AND `deadline_at <= now` | `high`는 `deadline_at`이 NULL이라 자동 제외 |
+| **`APV-GATE` 제외** | 등급 검사로 차단 | DES-014 §3-2 · DES-003 v2 CHECK 제약 |
+| 기록 | `MSG-05` 시스템 이벤트 | 자동 진행이 대화에 보여야 한다 |
+
+> **⚠ 배치 위치가 아직 설계에 없다.** 이 잡이 Fastify 프로세스 내부 타이머인지 별도 워커인지 DES-001 아키텍처에 정의되어야 한다. 본 문서는 **동작만** 정의한다. → §미해결
 
 ---
 
@@ -824,6 +1288,99 @@ class StatusChangeService {
 }
 ```
 
+### Services — v2 신규 (`src/backend/services/`)
+
+```typescript
+// conversation.service.ts
+class ConversationService {
+  list(opts: ListConversationsOpts): Promise<Conversation[]>
+  getById(id: string): Promise<Conversation>
+  listMessages(convId: string, opts: ListMessagesOpts): Promise<CursorResponse<Message>>
+  sendMessage(convId: string, input: SendMessageInput): Promise<Message>
+  search(opts: SearchMessagesOpts): Promise<SearchResult[]>
+  exportMarkdown(convId: string): Promise<string>
+
+  // 시스템 발화 — Agent·Main·스케줄러가 쓴다
+  appendSystemMessage(convId: string, msgType: MsgType, body: string,
+                      structured?: StructuredReport): Promise<Message>
+
+  // 채널 생명주기
+  createForAgent(agentId: string): Promise<Conversation>
+  markReadonly(agentId: string): Promise<void>                       // Agent 종료 시
+  archiveByEntity(agentId: string, snapshot: EntitySnapshot): Promise<string>  // Agent 삭제 시 (D-27)
+}
+
+// approval.service.ts
+class ApprovalService {
+  request(input: {
+    approvalType: ApprovalType; level: DecisionLevel; subject: string;
+    options: ApprovalOption[]; artifacts?: string[];
+    rationale?: string; impact?: ApprovalImpact;
+    requestedBy: string; stageId?: string; conversationId: string;
+  }): Promise<ApprovalDetail | null>          // level==='low'면 null
+
+  list(opts: ListApprovalsOpts): Promise<ApprovalSummary[]>
+  getById(id: string): Promise<ApprovalDetail>
+  resolve(id: string, input: ResolveApprovalInput): Promise<ApprovalDetail>
+
+  findGateApproval(stageId: string): Promise<ApprovalDetail | null>
+  findExpired(now: string): Promise<ApprovalSummary[]>   // 스케줄러 전용
+  autoAdvance(id: string): Promise<ApprovalDetail>       // 스케줄러 전용. APV-GATE 거부
+}
+
+// phase.service.ts
+class PhaseService {
+  getCurrent(): Promise<PhaseCurrent>
+  checkWip(phaseId: string): Promise<WipViolation[]>     // 저장하지 않고 계산
+  createWaiver(input: CreateWipWaiverInput): Promise<void>
+}
+
+// stage.service.ts
+class StageService {
+  start(id: string): Promise<StageSummary>               // 게이트 검증 — §16
+  complete(id: string): Promise<StageSummary>
+  markGatePassed(stageId: string): Promise<void>
+  isGateRequired(skill: SkillName): boolean              // 스킬 전환 모드에서 파생
+}
+
+// artifact.service.ts
+class ArtifactService {
+  list(opts: { stage?: string; syncStatus?: SyncStatus }): Promise<Artifact[]>
+  getContent(id: string): Promise<string>
+  upsert(input: {
+    stageId: string; code: string; title: string;
+    notionUrl?: string; gitPath?: string;
+  }): Promise<Artifact>
+
+  // syncStatus는 저장하지 않고 파생한다 (DES-003 v2 §4-4)
+  private deriveSyncStatus(notionUrl: string | null, gitPath: string | null): SyncStatus
+}
+```
+
+### Jobs — v2 신규 (`src/backend/jobs/`)
+
+```typescript
+// approval-timeout.job.ts
+class ApprovalTimeoutJob {
+  start(): void                    // 60초 주기 시작
+  stop(): void
+  private tick(): Promise<void>    // §17 시퀀스
+}
+```
+
+> **배치 위치는 DES-001에서 확정한다.** Fastify 프로세스 내부 타이머인지 별도 워커인지에 따라 `start()` 호출 지점이 달라진다.
+
+### WebSocket Hub — v2 신규 (`src/backend/ws/`)
+
+```typescript
+class WebSocketHub {
+  register(channel: string, socket: WebSocket, token: string): void
+  broadcast<T>(channel: string, envelope: WsEnvelope<T>): void
+  broadcastGlobal<T>(envelope: WsEnvelope<T>): void
+  // 재연결 후 누락은 REST 조회로 보충한다. 서버는 버퍼링하지 않는다
+}
+```
+
 ### Repositories (`src/backend/repositories/`)
 
 ```typescript
@@ -881,8 +1438,8 @@ function getAllowedTransitions(entityType: EntityType, fromStatus: string): stri
 |------------------|----------|
 | 함수 시그니처의 타입 | DES-009 코드 정의서 (Enum, ErrorCode, 상수) |
 | 시퀀스의 상태 전이 규칙 | DES-007 상태 흐름도 (전이 맵, 가드 조건) |
-| API 엔드포인트 세부 스펙 | DES-002 API 명세서 (엔드포인트 목록) |
-| DB 테이블/컬럼 | DES-003 데이터 모델 (ERD) |
+| API 엔드포인트 세부 스펙 | DES-002 v2 API 명세서 (31종 · JSON Schema 규칙 · 에러 매핑) |
+| DB 테이블/컬럼 | DES-003 v2 데이터 모델 (테이블 15종 · CHECK 제약) |
 | 컴포넌트 간 의존 방향 | DES-001 아키텍처 (C4 Component Diagram) |
 | CLI 명령 사용 시나리오 | DES-005 스토리보드 |
 | CLI 출력 형식·인터랙션 | DES-006 화면 명세서 (CLI) v2 |
@@ -890,13 +1447,29 @@ function getAllowedTransitions(entityType: EntityType, fromStatus: string): stri
 
 ---
 
-## ⚠ 2026-09-01 승인 반영 필요
+## 2026-09-01 승인 반영 현황
 
-| 항목 | 필요한 변경 | 근거 |
-|------|-----------|------|
-| Agent 삭제 시퀀스 (§13) | 대화 CASCADE 삭제 → `archived` 전환으로 수정 | D-27 |
-| 신규 시퀀스 | 대화 송수신, 의사결정 요청·응답, 승인 게이트 통과, 단계 착수, 페어링, 푸시 발송 | D-09, D-14, D-16, D-19, D-21 |
-| 신규 Service 시그니처 | ConversationService, ApprovalService, PhaseService, ArtifactService, PushService | 전반 |
+| 항목 | 필요한 변경 | 근거 | 상태 |
+|------|-----------|------|:---:|
+| Agent 삭제 시퀀스 (§13) | 대화 CASCADE 삭제 → `archived` 전환 | D-27 | ✅ **v2 반영** |
+| 대화 송수신 시퀀스 | 신규 (§14) | D-09 | ✅ **v2 반영** |
+| 의사결정 요청·응답 시퀀스 | 신규 (§15) | D-14 · D-16 | ✅ **v2 반영** |
+| 승인 게이트·단계 착수 시퀀스 | 신규 (§16) | D-16 | ✅ **v2 반영** |
+| 타임아웃 자동 진행 시퀀스 | 신규 (§17) | D-10 | ✅ **v2 반영** |
+| 신규 Service 시그니처 | ConversationService · ApprovalService · PhaseService · StageService · ArtifactService | 전반 | ✅ **v2 반영** |
+| 대화·승인·진행 타입 정의 | 공통 타입 27종 추가 | DES-002 v2 §9 | ✅ **v2 반영** |
+| 페어링·푸시 시퀀스 | PushService · PairingService | D-19 · D-21 | ⏸️ **Phase 2** — 터널링 연기 |
+
+---
+
+## 미해결 사항
+
+| 항목 | 내용 | 등급 | 처리 시점 |
+|------|------|:---:|----------|
+| **타임아웃 잡 배치 위치** | §17이 **동작만** 정의한다. Fastify 프로세스 내부 타이머인지 별도 워커인지 미정이며, 이에 따라 `ApprovalTimeoutJob.start()` 호출 지점이 달라진다 | **보통** | DES-001 개정 시 |
+| **DES-007 상태 흐름도 반영** | §13의 Agent 삭제 → 대화 아카이브 전이가 상태 흐름도에 없다. `conversations`에 FK가 없어 애플리케이션이 책임지는 전이다 | **보통** | DES-007 개정 시 |
+| **Repository 시그니처 미작성** | v2 Service 5종에 대응하는 Repository 시그니처를 아직 적지 않았다. Service 계약이 확정되었으므로 기계적으로 도출 가능하다 | 낮음 | develop |
+| **DES-009 Enum 편입** | `ApprovalType` · `DecisionLevel` · `ApprovalStatus` · `SkillName` · `StageStatus` · `SyncStatus` · `MsgType` · `SenderRole` 8종을 코드 정의서에 반영해야 한다 | 낮음 | DES-009 개정 시 |
 
 ---
 
@@ -905,4 +1478,5 @@ function getAllowedTransitions(entityType: EntityType, fromStatus: string): stri
 | 버전 | 날짜 | 내용 |
 |------|------|------|
 | v1 | 2026-08-24 | 최초 작성 — 13개 기능 시퀀스 + 전체 함수 시그니처 |
-| — | 2026-09-01 | **Git 동기화** + 승인 반영 필요 항목 주석 추가 (내용 변경 없음) |
+| — | 2026-09-01 | Git 동기화 + 승인 반영 필요 항목 주석 추가 (내용 변경 없음) |
+| **v2** | 2026-09-01 | **승인 반영 개정.** 대화·승인·진행 **타입 27종 추가**(DES-002 v2 §6 JSON Schema 도출의 입력), **시퀀스 4종 신규**(§14 대화 송수신 · §15 의사결정 요청·응답 · §16 승인 게이트 검증 · §17 타임아웃 자동 진행), **§13 Agent 삭제를 D-27 기준으로 개정**(CASCADE → 아카이브, 스냅샷 선기록 순서 명시).<br>Service 5종 · Job 1종 · WebSocketHub 시그니처 추가. 커서 페이지네이션 `limit+1` 판정 규칙 명시. 미해결 4건 등록 |
