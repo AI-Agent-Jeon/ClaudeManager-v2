@@ -224,7 +224,7 @@ Pane 1에서 Agent 선택 시 Pane 3의 **기본 탭이 [대화]**다 (DES-012 �
 | EVT-CH-2 | Pane 1 Agent 클릭 | Agent 존재 | 인라인갱신 | Pane 3 [대화] 탭 | 해당 CH-AGENT 메시지 | GET /api/conversations/:id/messages |
 | EVT-CH-3 | 입력창 `⏎` | 본문 1자 이상 | 인라인갱신 | 대화 하단 | MSG-01 추가 + 상대 응답 스트리밍 | POST /api/conversations/:id/messages |
 | EVT-CH-4 | `Shift+⏎` | — | 인라인갱신 | 입력창 | 줄바꿈 (전송 아님) | — |
-| EVT-CH-5 | MSG-04 [승인] 클릭 | 미응답 상태 | 인라인갱신 + 토스트 | 해당 카드 → 해결 상태 | 응답 내용, 응답 시각, 응답자 | POST /api/decisions/:id/resolve |
+| EVT-CH-5 | MSG-04 [승인] 클릭 | 미응답 상태 | 인라인갱신 + 토스트 | 해당 카드 → 해결 상태 | 응답 내용, 응답 시각, 응답자 | POST /api/approvals/:id/resolve |
 | EVT-CH-6 | MSG-04 [답신] 클릭 | 미응답 상태 | 인라인갱신 | 입력창 포커스 + 인용 삽입 | 인용된 안건 요약 | — |
 | EVT-CH-7 | MSG-06 파일 칩 클릭 | — | 화면이동(새 탭) | docs/ 뷰어 또는 Notion | 파일 내용 | — |
 | EVT-CH-8 | MSG-05 「대화에서 보기」 | Sub-Agent 보고 존재 | 인라인갱신 | 해당 메시지로 스크롤 + 하이라이트 | Sub-Agent 보고 전문 | — |
@@ -429,6 +429,8 @@ $ cm decide dq7f8a9b --approve
 
 ### 6-2. 신규 엔드포인트 6종
 
+> **DES-002 v2 반영**: 아래 `/api/decisions` 2종은 D-18(승인 통합)로 **폐기**되었다. 실제 채택 엔드포인트는 DES-002 v2 §3-2(대화 6종)·§3-3(승인·진행 8종)이 기준이다.
+
 | 메서드 | 경로 | 기능 |
 |--------|------|------|
 | GET | `/api/conversations?type=&status=&project=&from=&to=` | 채널 목록 + 미읽음 수 (**v2**: 필터 파라미터 추가) |
@@ -436,8 +438,8 @@ $ cm decide dq7f8a9b --approve
 | POST | `/api/conversations/:id/messages` | 대표 발화 전송 |
 | GET | `/api/conversations/search?q=` | **v2 신규** — 전 채널 메시지 전문 검색 (FTS5) |
 | GET | `/api/conversations/:id/export` | **v2 신규** — 대화 전체를 마크다운으로 내보내기 |
-| GET | `/api/decisions?status=pending` | 미응답 의사결정 요청 |
-| POST | `/api/decisions/:id/resolve` | 의사결정 응답 |
+| ~~GET~~ | ~~`/api/decisions?status=pending`~~ | **폐기** — D-18 통합으로 `GET /api/approvals?status=pending`을 쓴다 (DES-002 v2 §3-2) |
+| ~~POST~~ | ~~`/api/decisions/:id/resolve`~~ | **폐기** — `POST /api/approvals/:id/resolve`를 쓴다 (DES-002 v2 §5) |
 | WS | `/ws/conversations/:id` | 메시지 스트리밍 |
 
 ---
