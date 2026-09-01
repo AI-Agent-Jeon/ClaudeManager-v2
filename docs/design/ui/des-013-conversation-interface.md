@@ -421,9 +421,9 @@ $ cm decide dq7f8a9b --approve
 | `conversations` | id, channel_type(`main`\|`agent`), entity_id(nullable), status(`active`\|`readonly`\|**`archived`**), **`entity_snapshot`(JSON)**, created_at, archived_at | `main`은 entity_id NULL, 전역 1행.<br>**v2**: `archived` 상태 + `entity_snapshot`(Agent명·프로젝트명·유형) 추가 — 삭제된 Agent의 대화를 이름과 함께 보존 |
 | `messages` | id, conversation_id(FK), msg_type(MSG-01~06), sender_role, body, structured(JSON), created_at | MSG-03의 4단 보고는 `structured`에 저장 |
 | `messages_fts` | **v2 신규** — `messages(body)` 대상 SQLite FTS5 가상 테이블 | 전문 검색(§4-5). `messages` INSERT/UPDATE/DELETE 트리거로 동기화 |
-| `decision_requests` | id, message_id(FK), level(`high`\|`medium`\|`low`), subject, options(JSON), deadline_at, resolved_at, resolution, resolved_by | `low`는 발행하지 않으므로 실제로는 high/medium만 적재.<br>DES-014 D-18 승인 시 `approvals`로 통합 |
+| ~~`decision_requests`~~ | **폐기 — 만들지 않는다.** D-18 승인으로 `approvals` 테이블에 통합되었다 | 컬럼·CHECK 제약은 **DES-003 v2 §4-1**에 정의되어 있다. MSG-04는 `approvals.message_id`로 연결된다 |
 
-인덱스: `messages(conversation_id, created_at)`, `decision_requests(resolved_at)` — 미응답 조회용, **`conversations(status, archived_at)`** — 아카이브 목록용.
+인덱스: `messages(conversation_id, created_at)`, **`conversations(status, archived_at)`** — 아카이브 목록용. 미응답 승인 조회 인덱스는 `approvals(status, level)`로 이관되었다 (DES-003 v2 §5).
 
 > **FK 정책 (v2)**: `messages.conversation_id`는 CASCADE지만, **Agent 삭제가 `conversations` 행을 삭제하지 않는다.** Agent 삭제는 `conversations.status = 'archived'` + `entity_snapshot` 기록으로 처리한다. 따라서 메시지는 어떤 경우에도 사라지지 않는다.
 

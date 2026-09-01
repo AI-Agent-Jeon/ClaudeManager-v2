@@ -376,9 +376,9 @@ $ cm review ap4b2c1d
 
 | 테이블 | 상태 | 주요 컬럼 | 비고 |
 |--------|------|----------|------|
-| `approvals` | **변경** (DES-013 `decision_requests` 대체) | id, approval_type(APV-*), level, stage, subject, options(JSON), artifacts(JSON), rationale, impact(JSON), requested_by, deadline_at, status, resolution, reason, resolved_at | DES-013 §6-1 대비 `approval_type`·`stage`·`artifacts`·`impact` 추가 |
+| `approvals` | **변경** (DES-013 `decision_requests` 대체) | id, **message_id(FK)**, stage_id(FK), approval_type(APV-*), level, subject, options(JSON), artifacts(JSON), rationale, impact(JSON), requested_by, deadline_at, status, resolution, reason, resolved_at | DES-013 §6-1 대비 `approval_type`·`stage_id`·`artifacts`·`impact` 추가.<br>**`message_id` 보완 (DES-003 v2)** — 승인 카드를 대화에 렌더링하려면 발행 메시지 참조가 필요하다. 컬럼·제약 상세는 **DES-003 v2 §4-1** |
 | `phases` | 신규 | id, number, name, started_at, completed_at, current_stage | Phase 1개당 1행 |
-| `stages` | 신규 | id, phase_id(FK), skill(plan\~operate), status, started_at, completed_at, gate_approval_id(nullable FK) | Phase당 7행 |
+| `stages` | 신규 | id, phase_id(FK), skill(plan\~operate), status, started_at, completed_at | Phase당 7행. **`gate_approval_id` 제거 (DES-003 v2 §4-3)** — `approvals.stage_id`와 순환 FK를 만든다. 게이트 승인은 `approvals`에서 `stage_id + approval_type=APV-GATE`로 조회한다 |
 | `artifacts` | 신규 | id, stage_id(FK), code(PLN-001 등), title, status, notion_url, git_path, updated_at | Notion/Git 동기화 추적 |
 | `wip_waivers` | 신규 | id, phase_id(FK), rule, reason, created_at | WIP 위반 무시 기록 |
 
