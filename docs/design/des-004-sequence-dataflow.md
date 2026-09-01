@@ -1469,7 +1469,7 @@ function getAllowedTransitions(entityType: EntityType, fromStatus: string): stri
 | ~~타임아웃 잡 배치 위치~~ | ✅ **확정 완료 (2026-09-01)** — DES-001 v3 ADR-012. 서버 `ready` 훅에서 `start()`, Graceful Shutdown에서 `stop()` | 보통 | 완료 |
 | ~~DES-007 상태 흐름도 반영~~ | ✅ **반영 완료 (2026-09-01)** — DES-007 v2 §5-1 | 보통 | 완료 |
 | **Repository 시그니처 미작성** | v2 Service 5종에 대응하는 Repository 시그니처를 아직 적지 않았다. Service 계약이 확정되었으므로 기계적으로 도출 가능하다 | 낮음 | develop |
-| **DES-009 Enum 편입** | `ApprovalType` · `DecisionLevel` · `ApprovalStatus` · `SkillName` · `StageStatus` · `SyncStatus` · `MsgType` · `SenderRole` 8종을 코드 정의서에 반영해야 한다 | 낮음 | DES-009 개정 시 |
+| ~~DES-009 Enum 편입~~ | ✅ **반영 완료 (2026-09-01)** — DES-009 v3에 Enum 12종. `ApprovalStatus`·`DecisionLevel`·`WaitingReason` 초안 3건 정정 포함 | 낮음 | 완료 |
 
 ---
 
