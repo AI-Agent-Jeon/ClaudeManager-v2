@@ -1,13 +1,13 @@
 # DES-001 아키텍처 설계서
 
 > Phase 1: 기반 구축
-> 버전: v2.0 (2026-08-24)
+> 버전: **v3.0 (2026-09-01)** — 승인 반영. Phase 1 컴포넌트 17 → 30종 + ADR-012
 > **원본**: [Notion DES-001](https://app.notion.com/p/3c5d066504ec81b78014c7ccd8cb0723) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
-> **⚠ 개정 대기 (2026-09-01 승인 반영)**
-> D-19(터널링) 승인에 따라 **접속 방식·HTTPS 경계·Web Push 외부 연동 경로**를 반영해야 한다. 개정 규모 **대**.
-> 상세는 `docs/00-approvals.md` §승인 후 후속 작업 3번, DES-015 §2 참조.
+> **✅ 개정 완료 (2026-09-01)**
+> 터널링(D-19)은 비용 제약으로 **Phase 2 연기**가 확정되어 Phase 1은 루프백 전용을 유지한다 (§접속 경계).
+> 대화·승인·진행 컴포넌트와 **타임아웃 잡 배치(ADR-012)**를 반영했다. 상세는 §2026-09-01 승인 반영 현황.
 
 ---
 
@@ -84,7 +84,7 @@ ANL-002 의존관계 맵의 Layer 0~3 구조와 일치:
 
 ---
 
-## C4 Level 3: Component Diagram
+## C4 Level 3: Component Diagram — **v3 개정**
 
 ### Backend Server 내부 구조
 
@@ -94,6 +94,7 @@ graph TD
         subgraph Plugins["Plugins"]
             DBPlugin["Database Plugin<br>SQLite + Drizzle 연결"]
             AuthPlugin["Auth Plugin<br>JWT 발급/검증"]
+            WsPlugin["WebSocket Plugin<br>@fastify/websocket"]
         end
 
         subgraph Routes["API Routes"]
@@ -103,6 +104,10 @@ graph TD
             TaskRoutes["Task Routes<br>/api/tasks/*"]
             StatusChangeRoutes["StatusChange Routes<br>/api/status-changes/*"]
             HealthRoutes["Health Routes<br>/api/health"]
+            ConvRoutes["Conversation Routes<br>/api/conversations/*"]
+            ApprovalRoutes["Approval Routes<br>/api/approvals/*"]
+            PhaseRoutes["Phase·Stage Routes<br>/api/phases/* /api/stages/*"]
+            ArtifactRoutes["Artifact Routes<br>/api/artifacts/*"]
         end
 
         subgraph Services["Services"]
@@ -111,6 +116,11 @@ graph TD
             AgentService["Agent Service"]
             TaskService["Task Service"]
             StatusChangeService["StatusChange Service"]
+            ConvService["Conversation Service"]
+            ApprovalService["Approval Service"]
+            PhaseService["Phase Service"]
+            StageService["Stage Service"]
+            ArtifactService["Artifact Service"]
         end
 
         subgraph Repositories["Repositories"]
@@ -118,9 +128,19 @@ graph TD
             AgentRepo["Agent Repository"]
             TaskRepo["Task Repository"]
             StatusChangeRepo["StatusChange Repository"]
+            ConvRepo["Conversation Repository"]
+            MessageRepo["Message Repository<br>+ FTS5 검색"]
+            ApprovalRepo["Approval Repository"]
+            PhaseRepo["Phase·Stage Repository"]
+            ArtifactRepo["Artifact Repository"]
         end
 
-        StateMachine["State Machine<br>상태 전이 검증"]
+        subgraph Jobs["Background Jobs"]
+            TimeoutJob["ApprovalTimeoutJob<br>60초 주기"]
+        end
+
+        StateMachine["State Machine<br>상태 전이 검증 (6종)"]
+        WsHub["WebSocket Hub<br>채널별 브로드캐스트"]
     end
 
     DB[("SQLite")]
@@ -130,6 +150,11 @@ graph TD
     AgentRoutes --> AgentService
     TaskRoutes --> TaskService
     StatusChangeRoutes --> StatusChangeService
+    ConvRoutes --> ConvService
+    ApprovalRoutes --> ApprovalService
+    PhaseRoutes --> PhaseService
+    PhaseRoutes --> StageService
+    ArtifactRoutes --> ArtifactService
 
     AuthService --> AuthPlugin
     ProjectService --> ProjectRepo
@@ -138,16 +163,42 @@ graph TD
     AgentService --> AgentRepo
     AgentService --> StatusChangeService
     AgentService --> StateMachine
+    AgentService --> ConvService
     TaskService --> TaskRepo
     TaskService --> StatusChangeService
     TaskService --> StateMachine
+
+    ConvService --> ConvRepo
+    ConvService --> MessageRepo
+    ConvService --> StateMachine
+    ConvService --> WsHub
+    ApprovalService --> ApprovalRepo
+    ApprovalService --> ConvService
+    ApprovalService --> StateMachine
+    ApprovalService --> WsHub
+    PhaseService --> PhaseRepo
+    StageService --> PhaseRepo
+    StageService --> ApprovalService
+    StageService --> StateMachine
+    ArtifactService --> ArtifactRepo
+
+    TimeoutJob --> ApprovalService
+
+    WsHub --> WsPlugin
 
     ProjectRepo --> DBPlugin
     AgentRepo --> DBPlugin
     TaskRepo --> DBPlugin
     StatusChangeRepo --> DBPlugin
+    ConvRepo --> DBPlugin
+    MessageRepo --> DBPlugin
+    ApprovalRepo --> DBPlugin
+    PhaseRepo --> DBPlugin
+    ArtifactRepo --> DBPlugin
     DBPlugin --> DB
 ```
+
+> **`AgentService → ConversationService` 의존이 v3에서 추가되었다.** Agent 생성 시 CH-AGENT 개설, 종료 시 `readonly`, 삭제 시 `archived` 전환이 필요하기 때문이다 (D-27 · DES-007 v2 §5-1). 역방향 의존은 없다.
 
 ### Component 상세
 
@@ -155,13 +206,14 @@ graph TD
 |-----------|------|------|-----------|
 | Database Plugin | SQLite 연결 관리, Drizzle ORM 인스턴스 제공 | better-sqlite3, Drizzle | DAT-001 |
 | Auth Plugin | JWT 토큰 발급/검증, preHandler 훅 | @fastify/jwt | FR-002, NFR-002 |
+| **WebSocket Plugin** | WS 업그레이드 처리, 연결 수명 관리 | @fastify/websocket | **NFR-003** |
 | Auth Routes | 로그인/토큰 관리 엔드포인트 | Auth Service | FR-002 |
 | Auth Service | 인증 비즈니스 로직 | Auth Plugin | FR-002 |
 | Project Routes | 프로젝트 CRUD 엔드포인트 | Project Service | FR-003, FR-004, FR-006 |
 | Project Service | 프로젝트 CRUD, 상태 전이 검증 | Project Repo, State Machine, StatusChange Service | FR-003, FR-004, FR-006 |
 | Project Repository | 프로젝트 데이터 액세스 | Database Plugin | FR-003, FR-004, FR-006 |
 | Agent Routes | Agent CRUD 엔드포인트 | Agent Service | FR-007 |
-| Agent Service | Agent CRUD, 상태 전이 검증 | Agent Repo, State Machine, StatusChange Service | FR-007 |
+| Agent Service | Agent CRUD, 상태 전이 검증, **대화 채널 생명주기 연동** | Agent Repo, State Machine, StatusChange Service, **Conversation Service** | FR-007 |
 | Agent Repository | Agent 데이터 액세스 | Database Plugin | FR-007 |
 | Task Routes | Task CRUD 엔드포인트 | Task Service | FR-008 |
 | Task Service | Task CRUD, 상태 전이 검증 | Task Repo, State Machine, StatusChange Service | FR-008 |
@@ -169,8 +221,24 @@ graph TD
 | StatusChange Routes | 상태 변경 이력 조회 엔드포인트 | StatusChange Service | FR-009 |
 | StatusChange Service | 상태 변경 로그 기록/조회 | StatusChange Repo | FR-009 |
 | StatusChange Repository | 상태 변경 이력 데이터 액세스 | Database Plugin | FR-009 |
-| State Machine | 엔티티별 상태 전이 규칙 검증 (데이터 기반) | — | FR-006, FR-007, FR-008 |
+| State Machine | 엔티티별 상태 전이 규칙 검증 (**6종** — Project·Agent·Task·Conversation·Approval·Stage) | — | FR-006~008, **FR-026, FR-028, FR-030** |
 | Health Routes | 서버 헬스체크 (인증 불필요) | Database Plugin | FR-001 |
+| **Conversation Routes** | 채널·메시지·검색·내보내기 엔드포인트 | Conversation Service | **FR-026, FR-027** |
+| **Conversation Service** | 채널 생명주기, 메시지 송수신, 커서 조회, FTS 검색 | Conv Repo, Message Repo, State Machine, WS Hub | **FR-026, FR-027** |
+| **Conversation Repository** | 채널 데이터 액세스 | Database Plugin | **FR-026** |
+| **Message Repository** | 메시지 CRUD + **FTS5 전문 검색** | Database Plugin | **FR-027** |
+| **Approval Routes** | 승인 목록·상세·처리 엔드포인트 | Approval Service | **FR-028** |
+| **Approval Service** | 의사결정 요청 발행, 승인 처리, 타임아웃 판정 | Approval Repo, Conversation Service, State Machine, WS Hub | **FR-028, FR-030** |
+| **Approval Repository** | 승인 데이터 액세스 | Database Plugin | **FR-028** |
+| **Phase·Stage Routes** | Phase 현황, 단계 착수, WIP 면제 엔드포인트 | Phase/Stage Service | **FR-029, FR-030** |
+| **Phase Service** | Phase 현황 집계, **WIP 규칙 검사** | Phase Repo | **FR-029** |
+| **Stage Service** | 단계 착수 **3단 게이트 검증** | Phase Repo, Approval Service, State Machine | **FR-030** |
+| **Phase·Stage Repository** | Phase·단계 데이터 액세스 | Database Plugin | **FR-029** |
+| **Artifact Routes** | 산출물 목록·본문 엔드포인트 | Artifact Service | **FR-031** |
+| **Artifact Service** | 산출물 조회, **동기화 상태 파생** | Artifact Repo | **FR-031** |
+| **Artifact Repository** | 산출물 데이터 액세스 | Database Plugin | **FR-031** |
+| **WebSocket Hub** | 채널별 소켓 등록·브로드캐스트. **버퍼링하지 않는다** | WebSocket Plugin | **NFR-003** |
+| **ApprovalTimeoutJob** | 60초 주기 만료 승인 자동 진행 (APV-GATE 제외) | Approval Service | **FR-028 (D-10)** |
 
 ### Must Story → Component 매핑 검증
 
@@ -221,14 +289,58 @@ graph TD
 
 ---
 
-## 레이어 규칙
+## 백그라운드 잡 배치 결정 — **v3 신규**
+
+### ADR-012: ApprovalTimeoutJob 실행 방식
+
+DES-002 v2와 DES-004 v2가 **"타임아웃 자동 진행을 누가 실행하는지 설계에 없다"**고 두 번 미해결로 걸어둔 항목이다. 여기서 확정한다.
+
+#### 맥락
+
+D-10에 따라 등급 '보통' 승인은 30분 후 자동 진행된다. 이를 감시할 주체가 필요하다. DES-004 v2 §17이 **동작**은 정의했으나 **배치 위치**는 미정이었다.
+
+#### 후보
+
+| 안 | 방식 | 장점 | 단점 |
+|---|------|------|------|
+| **(A) Fastify 프로세스 내부 타이머** ← **채택** | `setInterval` 기반, 서버 부팅 시 시작 | 프로세스 1개. 배포·감시 대상이 늘지 않는다. SQLite 연결을 공유한다 | 서버가 죽으면 잡도 죽는다 |
+| (B) 별도 워커 프로세스 | 독립 프로세스 | 서버 재시작과 무관 | **SQLite 파일을 2개 프로세스가 연다.** 쓰기 잠금 경합 발생. 프로세스 관리 대상 +1 |
+| (C) OS 스케줄러 (cron) | 외부 스케줄러 | 서버 부담 없음 | Windows·macOS 설정이 다르다. 1인 로컬 환경에 과잉 |
+
+#### 결정
+
+**(A) Fastify 프로세스 내부 타이머.**
+
+#### 근거
+
+1. **SQLite는 단일 쓰기자 모델이다.** (B)는 두 프로세스가 같은 파일에 쓰므로 `SQLITE_BUSY` 경합을 다뤄야 한다. ANL-004가 "로컬 단일 사용자"를 전제로 SQLite를 선택했는데, 워커를 붙이면 그 전제를 스스로 깨뜨린다
+2. **서버가 죽으면 Agent도 멈춘다.** (A)의 단점인 "서버와 운명을 같이한다"는 실제로는 문제가 아니다. 서버가 없으면 자동 진행할 Agent 자체가 동작하지 않는다
+3. **재시작 시 밀린 건은 자동 처리된다.** 잡이 조회 조건을 `deadline_at <= now`로 두므로, 서버가 꺼져 있던 동안 만료된 건도 첫 tick에서 함께 처리된다. 별도 복구 로직이 필요 없다
+4. 1인 로컬 MVP에 프로세스를 늘릴 이유가 없다 (RISK-006 복잡도 과소평가가 **높음**으로 상향된 상태다)
+
+#### 결과
+
+- `src/backend/jobs/approval-timeout.job.ts`
+- 서버 `ready` 훅에서 `start()`, Graceful Shutdown에서 `stop()`
+- **tick 중복 실행 방지**: 이전 tick이 끝나지 않았으면 건너뛴다. `setInterval`은 실행 시간을 기다리지 않는다
+- 실패해도 서버를 죽이지 않는다. tick 내부 예외는 로깅 후 삼킨다
+
+#### 기각 사유
+
+(B)는 SQLite 전제와 충돌한다. (C)는 크로스 플랫폼 설정 부담이 1인 환경에 과하다. 둘 다 Phase 2에서 다중 사용자·원격 접속이 들어올 때 재검토한다.
+
+---
+
+## 레이어 규칙 — **v3 개정**
 
 ### 의존 방향
 
 ```
-Routes → Services → Repositories → Database Plugin → SQLite
-                  → State Machine (순수 함수, 외부 의존 없음)
-                  → StatusChange Service (상태 변경 로그 기록)
+Routes  →  Services  →  Repositories  →  Database Plugin  →  SQLite
+Jobs    →  Services                    (Repository 직접 접근 금지)
+           →  State Machine   (순수 함수, 외부 의존 없음)
+           →  StatusChange Service  (상태 변경 로그)
+           →  WebSocket Hub   (브로드캐스트, 단방향 출력)
 ```
 
 ### 규칙
@@ -239,15 +351,51 @@ Routes → Services → Repositories → Database Plugin → SQLite
 4. **Repository는 Drizzle 쿼리만**: 비즈니스 로직 포함 금지
 5. **State Machine은 순수 함수**: 외부 의존 없이 전이 규칙만 검증
 6. **StatusChange Service는 횡단 관심사**: 모든 엔티티 Service에서 사용
+7. **Jobs는 Service만 호출** (v3) — Repository 직접 접근 금지. 잡이 비즈니스 규칙을 우회하면 안 된다
+8. **WebSocket Hub는 출력 전용** (v3) — Hub가 Service를 호출하지 않는다. 호출하면 순환이 생긴다
+
+> **허용된 Service 간 의존 3건** (순환 아님, 단방향)
+> `AgentService → ConversationService` · `ApprovalService → ConversationService` · `StageService → ApprovalService`
 
 ### Cross-Cutting Concerns
 
 | 관심사 | 구현 방식 | 적용 범위 |
 |--------|----------|----------|
-| 인증 | Fastify preHandler 훅 | 보호된 모든 라우트 |
+| 인증 (REST) | Fastify preHandler 훅 | 보호된 모든 라우트 |
+| **인증 (WebSocket)** | 연결 시 `?token=` 쿼리 검증 → 실패 시 close `4001` | **모든 WS 채널** |
 | 에러 처리 | Fastify setErrorHandler | 전역 |
 | 요청/응답 로깅 | Fastify onRequest/onResponse 훅 | 전역 |
-| 요청/응답 검증 | Fastify JSON Schema | 각 라우트 |
+| 요청/응답 검증 | Fastify JSON Schema (`additionalProperties: false`) | 각 라우트 |
+| **전이 이벤트 발행** | 트랜잭션 **커밋 후** WS Hub 브로드캐스트 | 상태 변경 전역 |
+
+> **브라우저 WebSocket API는 헤더를 실을 수 없다.** 그래서 WS 인증만 쿼리 파라미터를 쓴다. 토큰이 URL에 남으므로 **접속 로그에 토큰을 기록하지 않는다.**
+
+---
+
+## 접속 경계 — **v3 확정**
+
+| Phase | 바인딩 | 근거 |
+|-------|--------|------|
+| **Phase 1** | `127.0.0.1:3000` **전용** | 터널링(D-19·D-29)이 비용 제약으로 Phase 2 연기. 외부 노출 없음 |
+| Phase 2 | 터널(HTTPS) 경유 외부 접근 추가 | D-19 (B) · D-29 Tailscale. 착수 시 재검토 |
+
+> **RISK-010(인증 보안)의 "localhost only 바인딩" 전제는 Phase 1에서 유효하다.** v1의 개정 필요 항목은 터널링이 Phase 1에 있다는 가정이었으나, 그 가정이 D-19 연기로 해소되었다.
+> Phase 2 착수 시 터널 노출 범위·인증 경계를 재정의한다. Web Push(APNs/FCM 경유)도 그때 Context Diagram에 추가한다.
+
+---
+
+## Graceful Shutdown 설계 — **v3 개정**
+
+FR-001의 "진행 중인 요청을 완료한 후 정상 종료" 요구사항 대응:
+
+1. `SIGTERM`/`SIGINT` 시그널 핸들러 등록
+2. **`ApprovalTimeoutJob.stop()`** — 새 tick 진입 차단. 실행 중인 tick은 완료 대기 (v3)
+3. **WebSocket 연결 정리** — 모든 소켓에 close `1001`(Going Away) 발송 (v3)
+4. `server.close()` 호출 → 새 연결 거부, 기존 연결 완료 대기
+5. DB 연결 정리 (better-sqlite3 `db.close()`)
+6. 타임아웃 (10초) 후 강제 종료
+
+> **잡을 먼저 멈춘다.** DB를 닫은 뒤 tick이 돌면 연결 오류가 난다. 순서가 중요하다.
 
 ---
 
@@ -300,17 +448,6 @@ Phase 1의 FR-002는 토큰 기반 인증을 요구한다. 1인 사용자 로컬
 
 ---
 
-## Graceful Shutdown 설계
-
-FR-001의 "진행 중인 요청을 완료한 후 정상 종료" 요구사항 대응:
-
-1. `SIGTERM`/`SIGINT` 시그널 핸들러 등록
-2. `server.close()` 호출 → 새 연결 거부, 기존 연결 완료 대기
-3. DB 연결 정리 (better-sqlite3 `db.close()`)
-4. 타임아웃 (10초) 후 강제 종료
-
----
-
 ## Phase 2+ 확장 고려사항
 
 > Orca ADE 분석 결과 반영 (2026-08-24). Phase 1 설계 변경 아님, 향후 확장 시 참고.
@@ -340,17 +477,25 @@ FR-001의 "진행 중인 요청을 완료한 후 정상 종료" 요구사항 대
 
 ---
 
-## ⚠ 2026-09-01 승인 반영 필요 항목
+## 2026-09-01 승인 반영 현황
 
-`docs/00-approvals.md` 전건 승인에 따라 본 문서는 **개정 대상(규모 대)**이다.
+| 항목 | 필요했던 변경 | 근거 | 상태 |
+|------|-------------|------|:---:|
+| **접속 경계** | `127.0.0.1` → 터널(HTTPS) 외부 접근 추가 | D-19 | ⏸️ **Phase 2로 연기** — 터널링이 비용 제약으로 연기되어 Phase 1은 루프백 유지 (§접속 경계) |
+| **보안 경계** | RISK-010 "localhost only" 전제 재정의 | D-19 | ✅ **전제 유효 확인** — Phase 1은 외부 노출이 없다 |
+| **외부 연동** | Web Push(VAPID) → APNs/FCM 경로 명시 | D-21 | ⏸️ **Phase 2** — 원격 접속이 Phase 2로 밀렸다 |
+| **Phase 배치** | FR-018 승인 게이트 Ph.2 → **Ph.1**, FR-015 PWA Ph.4 → **Ph.2** | D-16 · D-23 | ✅ **v3 반영** — 승인 게이트가 Phase 1 컴포넌트로 편입 |
+| **신규 컴포넌트** | ConversationService · ApprovalService · PhaseService · PushService 앞당김 | D-09 · D-16 | ✅ **v3 반영** — Phase 1분 5종 + Job 1종 + WS Hub 추가. PushService만 Phase 2 |
+| **타임아웃 잡 배치** | 실행 방식 미정 | D-10 | ✅ **v3 확정** — ADR-012, Fastify 프로세스 내부 타이머 |
 
-| 항목 | 필요한 변경 | 근거 |
-|------|-----------|------|
-| **접속 경계** | `127.0.0.1` 전용 → **터널(HTTPS) 경유 외부 접근** 추가. Container Diagram에 Tunnel 요소 추가 | D-19 |
-| **보안 경계** | RISK-010의 "localhost only 바인딩" 전제 무효화 → 터널 노출 범위·인증 경계 재정의 | D-19 |
-| **외부 연동** | Web Push(VAPID) → APNs/FCM 경유 경로를 Context Diagram에 명시 (APV-EXT) | D-21 |
-| **Phase 배치** | FR-018 승인 게이트를 Phase 2 → **Phase 1**로, FR-015 PWA를 Phase 4 → **Phase 2**로 | D-16, D-23 |
-| **신규 컴포넌트** | ConversationService, ApprovalService, PhaseService, PushService를 Phase 1~2로 앞당김 | D-09, D-16 |
+---
+
+## 미해결 사항
+
+| 항목 | 내용 | 등급 | 처리 시점 |
+|------|------|:---:|----------|
+| **Frontend Container 미정의** | Container Diagram의 Frontend는 Phase 2 대상이라 내부 구조가 없다. DES-012 UI 레이아웃 개정 시 컴포넌트 계층을 여기에 반영해야 한다 | 낮음 | DES-012 개정 시 |
+| **FTS5 인덱스 크기 감시 없음** | `messages_fts`는 메시지가 쌓일수록 커진다. 로컬 SQLite라 용량 문제는 낮지만 감시 지표가 없다 | 낮음 | operate |
 
 ---
 
@@ -361,4 +506,5 @@ FR-001의 "진행 중인 요청을 완료한 후 정상 종료" 요구사항 대
 | v1 | 2026-08-23 | 최초 작성 (Phase 1 설계) |
 | v1.1 | 2026-08-24 | Phase 2+ 확장 고려사항 추가 (FR-013~015) |
 | v2.0 | 2026-08-24 | Phase 2~5 전체 확장 반영 (FR-016~025 아키텍처 영향 분석) |
-| — | 2026-09-01 | **Git 동기화** + 승인 반영 필요 항목 주석 추가 (내용 변경 없음) |
+| — | 2026-09-01 | Git 동기화 + 승인 반영 필요 항목 주석 추가 (내용 변경 없음) |
+| **v3.0** | 2026-09-01 | **승인 반영 개정.** Component Diagram에 **Service 5종 · Repository 5종 · WebSocket Hub · ApprovalTimeoutJob · WebSocket Plugin 추가**(Phase 1 컴포넌트 17 → 30종).<br>**ADR-012 신설 — 타임아웃 잡을 Fastify 프로세스 내부 타이머로 확정**(SQLite 단일 쓰기자 전제와 충돌하는 별도 워커안 기각). DES-002 v2·DES-004 v2가 두 번 걸어둔 미해결 해소.<br>레이어 규칙 2건 추가(Jobs는 Service만 호출 · WS Hub는 출력 전용), 허용된 Service 간 단방향 의존 3건 명시. WebSocket 인증을 Cross-Cutting에 편입. **접속 경계를 Phase 1 루프백 전용으로 확정**(D-19 연기 반영). Graceful Shutdown에 잡 정지·소켓 정리 2단계 추가. 미해결 2건 등록 |

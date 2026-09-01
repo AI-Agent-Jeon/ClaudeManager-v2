@@ -1466,7 +1466,7 @@ function getAllowedTransitions(entityType: EntityType, fromStatus: string): stri
 
 | 항목 | 내용 | 등급 | 처리 시점 |
 |------|------|:---:|----------|
-| **타임아웃 잡 배치 위치** | §17이 **동작만** 정의한다. Fastify 프로세스 내부 타이머인지 별도 워커인지 미정이며, 이에 따라 `ApprovalTimeoutJob.start()` 호출 지점이 달라진다 | **보통** | DES-001 개정 시 |
+| ~~타임아웃 잡 배치 위치~~ | ✅ **확정 완료 (2026-09-01)** — DES-001 v3 ADR-012. 서버 `ready` 훅에서 `start()`, Graceful Shutdown에서 `stop()` | 보통 | 완료 |
 | ~~DES-007 상태 흐름도 반영~~ | ✅ **반영 완료 (2026-09-01)** — DES-007 v2 §5-1 | 보통 | 완료 |
 | **Repository 시그니처 미작성** | v2 Service 5종에 대응하는 Repository 시그니처를 아직 적지 않았다. Service 계약이 확정되었으므로 기계적으로 도출 가능하다 | 낮음 | develop |
 | **DES-009 Enum 편입** | `ApprovalType` · `DecisionLevel` · `ApprovalStatus` · `SkillName` · `StageStatus` · `SyncStatus` · `MsgType` · `SenderRole` 8종을 코드 정의서에 반영해야 한다 | 낮음 | DES-009 개정 시 |
