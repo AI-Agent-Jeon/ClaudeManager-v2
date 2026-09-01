@@ -54,6 +54,7 @@ erDiagram
         text name
         text type
         text status "AgentStatus"
+        text waiting_reason "waiting일 때만 (D-11)"
         text skill
         text config "JSON"
         integer retry_count
@@ -244,6 +245,27 @@ END;
 > **⚠ 검토 필요 — 한국어 토크나이저**
 > `unicode61`은 공백·구두점 기준으로 자른다. 한국어는 조사가 붙어 **"설계서를"로 저장된 문서가 "설계서" 검색에 걸리지 않는다.**
 > 대안은 `tokenize='trigram'`(3글자 단위, 부분 일치 가능하지만 색인 크기 증가)이다. **develop 단계에서 실제 데이터로 두 방식을 비교한 뒤 확정한다** (의사결정 등급: 보통).
+
+---
+
+## 3-4. 기존 테이블 변경 — `agents` (D-11)
+
+Agent `waiting` 상태의 사유를 구분하기 위해 컬럼 1개를 추가한다. **신규 상태(`blocked_on_ceo`)를 만들지 않는다** — D-11이 상태 추가안을 기각했다 (DES-007 v2 §3-1).
+
+| 컬럼 | 타입 | 제약 | 설명 |
+|------|------|------|------|
+| `waiting_reason` | TEXT | NULL, CHECK IN (`ceo_approval`,`ceo_decision`,`external_input`) | 대기 사유 |
+
+```sql
+-- status가 waiting이 아니면 waiting_reason은 반드시 NULL
+CHECK (status = 'waiting' OR waiting_reason IS NULL)
+```
+
+| 사유 | 의미 | 타임아웃 |
+|------|------|:---:|
+| `ceo_approval` | 대표 승인 대기 — 등급 높음 또는 APV-GATE | 없음 (무기한) |
+| `ceo_decision` | 대표 응답 대기 — 등급 보통 | 30분 (D-10) |
+| `external_input` | 그 외 외부 입력 대기 | — |
 
 ---
 
@@ -485,7 +507,7 @@ Phase 2 확장 후보(FR-013 `worktrees`, FR-014 `agent_logs`)는 v1.1 기재를
 | 항목 | 내용 | 등급 | 처리 시점 |
 |------|------|:---:|----------|
 | **FTS5 한국어 토크나이저** | `unicode61`은 조사 때문에 "설계서를" ↛ "설계서" 검색 실패. `trigram` 대안 검토 필요 | 보통 | develop — 실데이터 비교 후 확정 |
-| **DES-007 상태 흐름도 반영** | `conversations.entity_id`에 FK가 없어 **Agent 삭제 시 아카이브 전환을 애플리케이션이 책임진다.** 상태 흐름도에 이 전이가 없다 | 보통 | DES-007 개정 시 |
+| ~~DES-007 상태 흐름도 반영~~ | ✅ **반영 완료 (2026-09-01)** — DES-007 v2 §5 대화 채널 상태 머신 신설, §5-1에 애플리케이션 책임 전이·순서·테스트 강제 명시 | 보통 | 완료 |
 | ~~DES-014 §7-1 정정~~ | ✅ **반영 완료** — `stages.gate_approval_id` 제거 + `approvals.message_id` 추가 표기 | 낮음 | 2026-09-01 |
 | ~~DES-013 §6-1 정정~~ | ✅ **반영 완료** — `decision_requests` 폐기 표기 + 인덱스 이관 명시 | 낮음 | 2026-09-01 |
 | ~~`approvals.message_id` 보완~~ | ✅ **반영 완료** — DES-014 §7-1 컬럼 목록에 추가 | 낮음 | 2026-09-01 |
