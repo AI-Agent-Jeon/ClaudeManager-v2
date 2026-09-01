@@ -138,7 +138,61 @@
 | 원격 접속 | **터널링** — Tailscale 또는 Cloudflare Tunnel (**고정 도메인 필수**) | **D-19** (APV-EXT 외부 연동) | ADR-010 |
 | 전문 검색 | **SQLite FTS5** | **D-27** (대화 아카이브 검색) | ADR-011 |
 
-> **미결**: D-19의 터널 제품 선택(Tailscale vs Cloudflare Tunnel)은 대표 실행 사항이다. WebAuthn 전제상 **고정 도메인을 제공하는 방식**이어야 한다.
+---
+
+## ADR-010: 터널 제품 선택 (D-19 후속)
+
+- **상태**: 제안 — **대표 결정 필요**
+- **날짜**: 2026-09-01
+- **의사결정 등급**: 높음 (외부 서비스 연동 = APV-EXT)
+
+### 맥락
+
+D-19에서 "터널링"이 승인되었으나 **어느 제품을 쓸지는 정해지지 않았다.** 선택 기준은 3가지다.
+
+1. **고정 도메인** — WebAuthn(생체인증)은 도메인이 바뀌면 등록한 passkey가 무효가 된다 (DES-015 §6-4)
+2. **HTTPS** — Service Worker·Web Push·WebAuthn 전부 필수 (DES-015 §2-2)
+3. **노출 범위** — RISK-011(터널 노출로 인한 공격면 확대) 완화
+
+### 비교
+
+| 기준 | **Tailscale** | **Cloudflare Tunnel** |
+|------|--------------|----------------------|
+| **비용** | 무료 (개인 플랜: 3사용자·100기기) | 무료. 단 **도메인 구매 필요** (연 1~2만원) |
+| **고정 도메인** | ✅ `<기기명>.<테일넷>.ts.net` — 도메인 불필요 | ⚠️ **자기 도메인이 있어야** 고정됨.<br>없으면 `trycloudflare.com` 랜덤 주소 → **재시작마다 바뀜 → WebAuthn 불가** |
+| **HTTPS** | ✅ Let's Encrypt 자동 (`tailscale cert`) | ✅ 자동 |
+| **노출 범위** | ✅ **내 기기만** (private tailnet). 인터넷에 안 뜸 | ⚠️ **공개 인터넷**. 막으려면 Cloudflare Access 별도 설정 |
+| **설정 난이도** | 낮음 — PC·폰에 앱 설치 후 로그인, `tailscale serve` 1줄 | 중간 — 도메인 등록 → cloudflared 설치 → 터널 생성 → DNS 연결 (12단계) |
+| **폰 준비물** | **Tailscale 앱 설치 + 로그인 필요** | 없음 (브라우저만) |
+| **PC 꺼지면** | 접속 불가 (동일) | 접속 불가 (동일) |
+
+### 결정 (권고)
+
+**Tailscale**을 권고한다.
+
+| 근거 | 설명 |
+|------|------|
+| 도메인 불필요 | `*.ts.net`이 그대로 고정 주소가 된다. Cloudflare는 도메인을 사야 WebAuthn이 성립한다 |
+| **노출이 없다** | 이게 결정적이다. Cloudflare Tunnel은 기본이 공개 인터넷 노출이라 **RISK-011이 그대로 살아난다.** Tailscale은 내 기기끼리만 통해서 공격면이 사실상 늘지 않는다 |
+| 설정이 짧다 | 앱 설치 + `tailscale serve 3000` 정도로 끝난다 |
+
+**감수할 단점**: 폰에 Tailscale 앱을 깔고 로그인해야 한다. 앱 하나 더 까는 대신 서버가 인터넷에 노출되지 않는 거래다.
+
+**Cloudflare Tunnel이 나은 경우**: 이미 Cloudflare에 도메인이 있고, 나중에 대표 외 다른 사람도 접속시킬 계획이 있다면.
+
+### 후속 영향
+
+| 문서 | 변경 |
+|------|------|
+| DES-001 아키텍처 | Container Diagram에 Tunnel 요소 추가, 보안 경계 재정의 |
+| DES-009 코드 정의서 | `DEFAULT_HOST` 주석 갱신 (localhost only → 터널 바인딩) |
+| ANL-003 RISK-010/011 | Tailscale 선택 시 **등급 하향 가능** (공개 노출 없음) |
+| DES-015 §6-6 | 페어링 URL을 `https://<기기명>.<테일넷>.ts.net/p/<토큰>` 형태로 확정 |
+
+### 참고
+
+- [Tailscale MagicDNS](https://tailscale.com/docs/features/magicdns) · [HTTPS 인증서 설정](https://tailscale.com/docs/how-to/set-up-https-certificates) · [Serve vs Funnel](https://deepwiki.com/tailscale-dev/ScaleTail/1.2-tailscale-concepts:-serve-funnel-and-magicdns)
+- [Cloudflare Quick Tunnels 제약](https://cloudflare-docs.justalittlebyte.ovh/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) · [Cloudflare Tunnel 설정 12단계](https://tech-insider.org/ie/cloudflare-tunnel-setup-2026/)
 
 ---
 
