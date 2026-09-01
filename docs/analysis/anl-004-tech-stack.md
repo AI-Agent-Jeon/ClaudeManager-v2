@@ -154,11 +154,36 @@ D-19에서 "터널링"이 승인되었으나 **어느 제품을 쓸지는 정해
 2. **HTTPS** — Service Worker·Web Push·WebAuthn 전부 필수 (DES-015 §2-2)
 3. **노출 범위** — RISK-011(터널 노출로 인한 공격면 확대) 완화
 
-### 비교
+### 🔴 라이선스 확인 결과 (2026-09-01) — 권고 뒤집힘
 
-| 기준 | **Tailscale** | **Cloudflare Tunnel** |
-|------|--------------|----------------------|
-| **비용** | 무료 (개인 플랜: 3사용자·100기기) | 무료. 단 **도메인 구매 필요** (연 1~2만원) |
+<!-- 초안에서 Tailscale 무료를 권고했으나 약관 확인 후 뒤집었다 -->
+**Tailscale Personal 플랜은 상업적 사용이 명시적으로 금지되어 있다.**
+
+> *"The Personal plan is not intended for commercial use… only suitable for non-commercial use of Tailscale."* — [Tailscale 무료 플랜 문서](https://tailscale.com/docs/account/manage-plans/free-plans-discounts)
+
+ClaudeManager는 대표의 **사업 운영 도구**이므로 상업적 사용에 해당한다. 따라서 **Tailscale 무료 플랜은 이 프로젝트에 쓸 수 없다.**
+
+- Tailscale은 계정 도메인으로 개인/사업을 자동 판별한다. Gmail 등 공개 도메인 → Personal(무료), 커스텀 도메인 → 사업용(14일 체험 후 유료)
+- 이 판정을 우회해 무료 플랜을 쓰는 것은 약관 위반이다
+
+**결과: 비용 비교가 역전된다.** 초안에서 "Tailscale 무료 vs Cloudflare 도메인 구매 필요"로 봤으나, 실제로는 **Tailscale이 유료, Cloudflare가 무료**다.
+
+### 소프트웨어 라이선스
+
+| 구성요소 | 라이선스 | 비고 |
+|---------|---------|------|
+| Tailscale 클라이언트 (`tailscaled`, CLI) | BSD-3-Clause | 오픈소스 |
+| Tailscale **컨트롤 플레인** | **독점 (SaaS 전용)** | 자체 호스팅 불가 → 유료 구독이 필요한 이유 |
+| `cloudflared` | **Apache-2.0** | 오픈소스 |
+| Cloudflare Tunnel 서비스 | 독점 (SaaS) | Zero Trust 무료 티어에 **상업 사용 제한 없음** |
+| **Headscale** (Tailscale 컨트롤 플레인 오픈소스 재구현) | **BSD-3-Clause** | 자체 호스팅. 공식 Tailscale 클라이언트를 그대로 사용 |
+
+### 비교 (라이선스 반영)
+
+| 기준 | **Tailscale** | **Cloudflare Tunnel** | **Headscale** (제3안) |
+|------|--------------|----------------------|---------------------|
+| **상업 사용** | ⚠️ **무료 플랜 불가** → 유료 필수 | ✅ 무료 티어로 가능 | ✅ 오픈소스, 제한 없음 |
+| **비용** | **유료** (사용자당 월 $6~ 수준, 가입 시 확인) | 무료 + **도메인 구매** (연 1~2만원) | 무료. 단 컨트롤 서버 운영 부담 |
 | **고정 도메인** | ✅ `<기기명>.<테일넷>.ts.net` — 도메인 불필요 | ⚠️ **자기 도메인이 있어야** 고정됨.<br>없으면 `trycloudflare.com` 랜덤 주소 → **재시작마다 바뀜 → WebAuthn 불가** |
 | **HTTPS** | ✅ Let's Encrypt 자동 (`tailscale cert`) | ✅ 자동 |
 | **노출 범위** | ✅ **내 기기만** (private tailnet). 인터넷에 안 뜸 | ⚠️ **공개 인터넷**. 막으려면 Cloudflare Access 별도 설정 |
@@ -166,19 +191,64 @@ D-19에서 "터널링"이 승인되었으나 **어느 제품을 쓸지는 정해
 | **폰 준비물** | **Tailscale 앱 설치 + 로그인 필요** | 없음 (브라우저만) |
 | **PC 꺼지면** | 접속 불가 (동일) | 접속 불가 (동일) |
 
-### 결정 (권고)
-
-**Tailscale**을 권고한다.
+### ✅ 결정: Tailscale (유료 플랜) — 2026-09-01 대표 확정
 
 | 근거 | 설명 |
 |------|------|
-| 도메인 불필요 | `*.ts.net`이 그대로 고정 주소가 된다. Cloudflare는 도메인을 사야 WebAuthn이 성립한다 |
-| **노출이 없다** | 이게 결정적이다. Cloudflare Tunnel은 기본이 공개 인터넷 노출이라 **RISK-011이 그대로 살아난다.** Tailscale은 내 기기끼리만 통해서 공격면이 사실상 늘지 않는다 |
-| 설정이 짧다 | 앱 설치 + `tailscale serve 3000` 정도로 끝난다 |
+| **노출이 없다** | 결정적 근거. Cloudflare Tunnel은 기본이 공개 인터넷 노출이라 **RISK-011이 그대로 살아난다.** Tailscale은 내 기기끼리만 통해 공격면이 사실상 늘지 않는다 |
+| 도메인 불필요 | `*.ts.net`이 고정 주소가 된다. WebAuthn 전제 충족 |
+| 설정이 짧다 | 앱 설치 + `tailscale serve` 1줄 |
+| **서버 설정 무변경** | 아래 §핵심 이점 참조 |
 
-**감수할 단점**: 폰에 Tailscale 앱을 깔고 로그인해야 한다. 앱 하나 더 까는 대신 서버가 인터넷에 노출되지 않는 거래다.
+**감수하는 것 2가지**
+1. **유료** — 상업 사용이므로 무료 Personal 플랜 사용 불가
+2. **폰에 Tailscale 앱 설치·로그인 필요**
 
-**Cloudflare Tunnel이 나은 경우**: 이미 Cloudflare에 도메인이 있고, 나중에 대표 외 다른 사람도 접속시킬 계획이 있다면.
+**기각**: Cloudflare Tunnel — 비용은 싸지만 기본이 공개 노출이라 보안 경계 재설계 부담이 크다. Headscale — 오픈소스·무료이나 **컨트롤 서버를 또 어디에 둘 것인가**라는 순환 문제가 생기고 1인 운영에 과하다.
+
+### 핵심 이점 — 서버 코드·설정을 바꾸지 않아도 된다
+
+`tailscale serve`는 **Tailscale 쪽에서 HTTPS를 종료하고 `127.0.0.1:3000`으로 프록시**한다.
+
+```
+폰 (Tailscale 앱)
+  ↓ https://<기기명>.<테일넷>.ts.net
+Tailscale (HTTPS 종료)
+  ↓ http://127.0.0.1:3000
+ClaudeManager 서버   ← 그대로. CM_HOST 변경 불필요
+```
+
+이 덕분에:
+
+| 영향 | 결과 |
+|------|------|
+| `CM_HOST=127.0.0.1` | **유지** — DES-009 상수 변경 불필요 |
+| DES-001 "localhost only 바인딩" 전제 | **유지** — 서버는 여전히 루프백만 듣는다 |
+| RISK-010 / RISK-011 | **등급 하향 가능** — 서버가 인터넷에 직접 노출되지 않는다 |
+
+> 앞서 "DES-001·DES-009 개정 규모 대"로 잡았으나, Tailscale 선택으로 **개정 범위가 크게 줄었다.** 아키텍처에 Tunnel 요소를 그리고 접속 경로를 문서화하는 수준이면 된다.
+
+### 대표 준비 체크리스트
+
+| # | 할 일 | 비고 |
+|:---:|------|------|
+| 1 | **Tailscale 계정 생성 + 유료 플랜 전환** | 사업 용도이므로 Personal(무료) 사용 불가. 커스텀 도메인 이메일로 가입하면 사업용으로 자동 판정, 14일 체험 제공 |
+| 2 | **PC(서버 실행 기기)에 Tailscale 설치 + 로그인** | macOS/Windows 클라이언트 |
+| 3 | **폰에 Tailscale 앱 설치 + 같은 계정 로그인** | iOS / Android |
+| 4 | **관리 콘솔에서 MagicDNS 켜기** | 기기 이름으로 접속하기 위함 |
+| 5 | **관리 콘솔에서 HTTPS Certificates 켜기** | ⚠️ **기기명과 테일넷 이름이 공개 원장(Certificate Transparency)에 게시**되는 데 동의해야 한다. 내용은 노출되지 않지만 이름은 공개된다 |
+| 6 | 확정된 주소를 알려주기 | `https://<기기명>.<테일넷>.ts.net` — 페어링 URL과 WebAuthn 도메인으로 고정 사용 |
+
+### 대표 준비 완료 후 개발 측 작업
+
+```bash
+# 서버 실행 기기에서 1회 설정
+tailscale cert <기기명>.<테일넷>.ts.net     # 인증서 발급
+tailscale serve --bg 3000                   # 3000포트를 HTTPS로 노출 (tailnet 내부 전용)
+tailscale serve status                      # 확인
+```
+
+> `tailscale funnel`은 **쓰지 않는다.** Funnel은 공개 인터넷 노출이라 이번 선택의 취지와 반대다. **`serve`만 사용**한다.
 
 ### 후속 영향
 
