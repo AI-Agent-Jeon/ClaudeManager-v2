@@ -126,7 +126,11 @@ function deriveTitle(row: TitleSource): string {
 /** toConversation이 요구하는 최소 필드 — 순수 ConversationRow에 agent_name만 더하면 된다 */
 type ConversationForDisplay = ConversationRow & { agent_name: string | null };
 
-function toConversation(row: ConversationForDisplay, lastMessageAt: string | null): Conversation {
+function toConversation(
+  row: ConversationForDisplay,
+  lastMessageAt: string | null,
+  unreadCount: number,
+): Conversation {
   return {
     id: row.id,
     channelType: row.channel_type as Conversation['channelType'],
@@ -134,9 +138,8 @@ function toConversation(row: ConversationForDisplay, lastMessageAt: string | nul
     status: row.status as Conversation['status'],
     entitySnapshot: row.entity_snapshot ? snapshotFromJson(row.entity_snapshot) : null,
     title: deriveTitle(row),
-    // ⚠ 임시 조치 — 읽음 상태를 저장하는 컬럼이 스키마에 없다(마이그레이션은 쓰기 금지 경로).
-    // 파생할 원본이 없어 항상 0을 반환한다. 대표 결정 대기 중 (위임 지시사항 참조).
-    unreadCount: 0,
+    // 읽음 포인터(last_read_at) 이후 메시지 수. NULL이면 전체가 미읽음이다 (DEV-D-05)
+    unreadCount,
     lastMessageAt,
     createdAt: row.created_at,
     archivedAt: row.archived_at,
@@ -195,7 +198,8 @@ export class ConversationService {
 
     return rows.map((row) => {
       const latest = this.messageRepo.findLatest(row.id);
-      return toConversation(row, latest?.created_at ?? null);
+      const unread = this.messageRepo.countUnread(row.id, row.last_read_at);
+      return toConversation(row, latest?.created_at ?? null, unread);
     });
   }
 
@@ -209,7 +213,26 @@ export class ConversationService {
       );
     }
     const latest = this.messageRepo.findLatest(id);
-    return toConversation(row, latest?.created_at ?? null);
+    const unread = this.messageRepo.countUnread(id, row.last_read_at);
+    return toConversation(row, latest?.created_at ?? null, unread);
+  }
+
+  /**
+   * 읽음 포인터를 지금으로 옮긴다 (DEV-D-05).
+   * `cm chat`으로 채널을 열거나 대화를 조회할 때 호출한다.
+   */
+  async markRead(id: string): Promise<Conversation> {
+    const exists = this.conversationRepo.findById(id);
+    if (!exists) {
+      throw new AppError(
+        404,
+        ErrorCode.CONVERSATION_NOT_FOUND,
+        `대화 채널을 찾을 수 없습니다: ${id}`,
+      );
+    }
+
+    this.conversationRepo.markRead(id, new Date().toISOString());
+    return this.getById(id);
   }
 
   /** FR-027 — 커서 페이지네이션. limit+1건을 조회해 초과분 유무로 hasMore를 판정한다 (DES-004 §14) */
@@ -357,7 +380,8 @@ export class ConversationService {
     });
 
     const row = this.conversationRepo.findByIdWithAgent(id) as ConversationWithAgentRow;
-    return toConversation(row, null);
+    // 방금 만든 채널이라 메시지가 없다 — 미읽음 0
+    return toConversation(row, null, 0);
   }
 
   /** Agent 종료(completed/cancelled) 시 CH-AGENT를 readonly로 전환한다 (DES-007 v2 §8) */
@@ -400,6 +424,11 @@ export class ConversationService {
         createdAt: new Date().toISOString(),
       });
 
-    return toConversation({ ...row, agent_name: null }, null);
+    // 멱등 시드다. 이미 있던 채널이면 미읽음이 있을 수 있다
+    return toConversation(
+      { ...row, agent_name: null },
+      this.messageRepo.findLatest(row.id)?.created_at ?? null,
+      this.messageRepo.countUnread(row.id, row.last_read_at),
+    );
   }
 }

@@ -2,7 +2,7 @@
 
 > Phase 1: 기반 구축
 > 문서코드: DES-004
-> 버전: **v2.3 (2026-09-02)** — `allowedTransitions` 전달 경로를 `details` 필드로 확정 (DES-009 v3.2)
+> 버전: **v2.4 (2026-09-02)** — `ConversationService.markRead` 추가, `unreadCount` 파생 근거 명시 (DEV-D-05)
 > **원본**: [Notion DES-004](https://app.notion.com/p/3c5d066504ec81d08e30df63322e4e98) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -139,7 +139,7 @@ interface Conversation {
   status: ConversationStatus;
   entitySnapshot: EntitySnapshot | null;
   title: string;                        // 파생: entitySnapshot ?? agents 조인
-  unreadCount: number;                  // 파생
+  unreadCount: number;                  // 파생 — last_read_at 이후 메시지 수 (DES-003 v2.2)
   lastMessageAt: string | null;
   createdAt: string;
   archivedAt: string | null;
@@ -1452,6 +1452,10 @@ class ConversationService {
   markReadonly(agentId: string): Promise<void>                       // Agent 종료 시
   archiveByEntity(agentId: string, snapshot: EntitySnapshot): Promise<string>  // Agent 삭제 시 (D-27)
   ensureMainChannel(): Promise<Conversation>                         // 부트스트랩 — 멱등 (v2.1 · R-01)
+
+  // 읽음 포인터를 지금으로 옮긴다 (v2.4 · DEV-D-05).
+  // cm chat으로 채널을 열거나 대화를 조회할 때 호출한다.
+  markRead(id: string): Promise<Conversation>
 }
 
 // approval.service.ts

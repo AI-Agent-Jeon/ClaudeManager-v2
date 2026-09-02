@@ -65,6 +65,7 @@ describe('마이그레이션 적용 — DES-003 §9-2', () => {
       '004_approvals.sql',
       '005_artifacts.sql',
       '006_status_ext.sql',
+      '007_conversation_read.sql',
     ]);
   });
 

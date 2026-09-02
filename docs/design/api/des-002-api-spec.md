@@ -1,7 +1,7 @@
 # DES-002 API 명세서
 
 > Phase 1: 기반 구축
-> 버전: **v2.2 (2026-09-02)** — 공통 에러 스키마에 선택 필드 `details` 추가 (DES-009 v3.2)
+> 버전: **v2.3 (2026-09-02)** — `unreadCount` 파생 근거 명시 (DEV-D-05)
 > **원본**: [Notion DES-002](https://app.notion.com/p/3c5d066504ec81958497d54fc5ab9fd3) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -195,6 +195,8 @@ Authorization: Bearer <JWT>
 ```
 
 > `title`은 저장 값이 아니다. `status='archived'`면 `entitySnapshot.agentName`에서, 아니면 `agents` 조인으로 만든다. **Agent가 삭제되어도 이름이 나온다** (D-27).
+
+> **`unreadCount`도 파생값이다 (v2.3 · DEV-D-05)**: `conversations.last_read_at` 이후에 도착한 메시지 수다. 경계는 `>`이므로 포인터와 같은 시각의 메시지는 읽은 것으로 본다. `last_read_at`이 NULL이면(한 번도 열지 않음) 전체가 미읽음이다. 상세는 DES-003 v2.2 §3-1.
 
 > **CH-MAIN 주소 지정 (v2.1)**: `:id`는 **UUID 전용**이다(§6-3 `format: 'uuid'`). `/api/conversations/main/...` 같은 경로 별칭은 스키마 검증에서 걸린다.
 > `cm chat main`과 웹 [Main] 진입은 **`GET /api/conversations?type=main`으로 id를 먼저 얻은 뒤** 그 UUID로 메시지 엔드포인트를 호출한다. CH-MAIN은 부분 유니크 인덱스로 전역 1개가 보장되므로 결과는 항상 1건이다 (DES-003 v2 §3-1).

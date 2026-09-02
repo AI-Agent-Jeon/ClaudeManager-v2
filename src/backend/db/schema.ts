@@ -103,6 +103,8 @@ export const conversations = sqliteTable(
     entitySnapshot: text('entity_snapshot'),
     createdAt: text('created_at').notNull(),
     archivedAt: text('archived_at'),
+    /** 읽음 포인터. NULL = 한 번도 열지 않음 → 전체가 미읽음 (DEV-D-05) */
+    lastReadAt: text('last_read_at'),
   },
   (t) => [
     // 부분 유니크(WHERE channel_type='main')는 Drizzle로 표현되지 않는다.

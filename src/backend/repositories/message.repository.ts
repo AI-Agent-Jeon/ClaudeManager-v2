@@ -148,6 +148,21 @@ export class MessageRepository {
   }
 
   /** 내보내기 전용 — 채널 전체를 시간순(오래된 것부터)으로 반환한다 */
+  /**
+   * 읽음 포인터 이후에 온 메시지 수 (DEV-D-05).
+   *
+   * `lastReadAt`이 NULL이면 한 번도 열지 않은 채널이므로 전체가 미읽음이다.
+   * (conversation_id, created_at) 인덱스 messages_conv_idx를 그대로 쓴다.
+   */
+  countUnread(conversationId: string, lastReadAt: string | null): number {
+    const sql = lastReadAt
+      ? 'SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ? AND created_at > ?'
+      : 'SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ?';
+    const params = lastReadAt ? [conversationId, lastReadAt] : [conversationId];
+
+    return (this.db.prepare(sql).get(...params) as { n: number }).n;
+  }
+
   listAll(conversationId: string): MessageRow[] {
     return this.db
       .prepare(

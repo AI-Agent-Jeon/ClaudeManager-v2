@@ -25,6 +25,8 @@ export const MIGRATION_FILES = [
   '004_approvals.sql',
   '005_artifacts.sql',
   '006_status_ext.sql',
+  // 007 — conversations.last_read_at (DEV-D-05, 대표 승인 2026-09-02)
+  '007_conversation_read.sql',
 ] as const;
 
 export type MigrationName = (typeof MIGRATION_FILES)[number];

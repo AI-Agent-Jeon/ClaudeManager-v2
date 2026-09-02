@@ -20,6 +20,8 @@ export interface ConversationRow {
   entity_snapshot: string | null;
   created_at: string;
   archived_at: string | null;
+  /** 읽음 포인터. NULL = 한 번도 열지 않음 (DEV-D-05, 마이그레이션 007) */
+  last_read_at: string | null;
 }
 
 /**
@@ -141,6 +143,16 @@ export class ConversationRepository {
   }
 
   /** Agent 삭제 시 아카이브 전환 (D-27) — snapshot은 JSON 문자열(snake_case)이다 */
+  /**
+   * 읽음 포인터를 갱신한다 (DEV-D-05).
+   * 대표가 채널을 열거나 메시지를 조회할 때 호출한다.
+   */
+  markRead(id: string, readAt: string): ConversationRow {
+    return this.db
+      .prepare('UPDATE conversations SET last_read_at = ? WHERE id = ? RETURNING *')
+      .get(readAt, id) as ConversationRow;
+  }
+
   archiveWithSnapshot(id: string, snapshotJson: string, archivedAt: string): ConversationRow {
     this.db
       .prepare(
