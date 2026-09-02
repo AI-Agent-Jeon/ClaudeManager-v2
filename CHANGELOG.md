@@ -44,9 +44,30 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 - `GET /api/phases/current` · `POST /api/phases` · `POST /api/wip-waivers` — `artifactCount`·`pendingApprovalCount`·`gate`는
   `PhaseRepository`가 JOIN(윈도 함수로 단계별 최신 APV-GATE 승인만 선택)으로 한 쿼리에 집계해 N+1을 피한다.
   `gate.required`는 저장하지 않고 CLAUDE.md 스킬 전환 모드에서 파생(`plan`·`test` 단계만 true, DES-002 §5 예시 근거)
+- 단계 착수 3단 게이트 강제 (`FR-030`) — `StageService.start()`가 **CLAUDE.md 스킬 전환 게이트의 유일한 강제 지점**인
+  `POST /api/stages/:id/start`를 구현한다. 가드 순서 고정: ①직전 단계가 `completed`인가(`422 INVALID_TRANSITION`,
+  자기 자신의 전이 유효성도 `STAGE_TRANSITIONS`로 함께 검증 — 재착수·재완료 우회 차단) ②게이트 필요 단계면
+  `ApprovalService.findGateApproval()`로 조회한 `APV-GATE`가 `approved`인가(`403 GATE_NOT_PASSED`,
+  `StageService → ApprovalService`는 허용된 Service 간 의존 4건 중 하나 — `ApprovalRepository`는 직접 만지지 않는다)
+  ③WIP=1 위반인데 `wip_waivers` 면제가 없는가(`409 WIP_VIOLATION`). 성공 시 `stages.status='in_progress'`·`started_at`·
+  `phases.current_stage`·`status_changes`를 한 트랜잭션으로 갱신하고, 커밋 후 `stage:changed`를 브로드캐스트한다.
+  `StageService.complete()`(`in_progress → completed`)도 함께 구현했으나 DES-002 엔드포인트 목록에 대응 라우트가
+  없어 서비스 메서드로만 존재한다 — HTTP로는 열지 않는다
+- `PhaseRepository`에 stage 조회·전이 메서드 추가 — `findStageById()`·`findStagesByPhase()`(집계 없이 가벼운 조회,
+  가드 1의 직전 단계 탐색용)·`findStageWithAggregates()`(단계 1건 집계, `findStagesWithAggregates`와 SQL을 공유하도록
+  `stageAggregateSql()`로 추출)·`startStage()`·`completeStage()`·`updateCurrentStage()`
 
 ### Changed
 
+- **`GATE_REQUIRED_SKILLS`를 단일 원본으로 승격** — `phase.service.ts`의 모듈 지역 상수였던 것을
+  `shared/constants.ts`로 옮기고, `StageService.isGateRequired()`(착수 가드 2단)가 같은 배열을 참조하게 했다.
+  두 서비스가 각자 배열을 들고 있으면 어느 stage의 `approvals.stage_id`에 `APV-GATE`를 채워야 하는지가 갈리고,
+  승인은 났는데 게이트가 안 열리는(또는 그 반대의) 상태가 될 수 있었다. 7개 스킬 전건 대조 회귀 테스트로 고정
+- `WIP_RULE`("주요 단계 WIP = 1")도 같은 이유로 `shared/constants.ts`로 승격 — `PhaseService.checkWip()`과
+  `StageService.start()` 가드 3단이 다른 문자열을 쓰면 같은 `wip_waivers` 면제를 두고도 판정이 갈릴 수 있었다
+- `gate.required` 파생·`StageAggregateRow → StageSummary` 변환(`isGateRequired`·`toStageSummary`·`sortBySkillOrder`·
+  `STAGE_ORDER`)을 `phase.service.ts` 내부에서 신설 `stage.service.ts`의 `stage-mapper.ts`로 승격해 `PhaseService`·
+  `StageService`가 공유한다 (§2 매핑 공유를 위한 최소 리팩터링, 개발 지시 범위)
 - 에러 응답에 **선택 필드 `details`** 추가. 필수는 4필드 그대로이며, 현재 사용처는 `INVALID_TRANSITION`의 `allowedTransitions` 하나뿐이다
 - `EntitySnapshot`에 `projectId` 추가 — Agent 삭제 후에도 채널이 프로젝트 필터에 걸리도록
 - `GET /api/conversations?project=` 필터가 `agents` 조인과 `entity_snapshot` 폴백을 함께 본다

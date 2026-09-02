@@ -151,12 +151,33 @@ export const SkillName = {
 } as const;
 export type SkillName = (typeof SkillName)[keyof typeof SkillName];
 
+/**
+ * CLAUDE.md 스킬 전환 모드에서 승인이 필수인 전환의 **시작 단계** (DES-002 v2.1
+ * §5 `GET /api/phases/current` 응답 예시 · DES-007 v2.1 §7-2 근거).
+ *
+ * **단일 원본이다.** `PhaseService.isGateRequired()`(gate.required 파생)와
+ * `StageService.isGateRequired()`(착수 가드 2단)가 둘 다 이 배열 하나만
+ * 참조한다 — 두 곳에 복제하면 어느 stage의 `approvals.stage_id`에
+ * `APV-GATE`를 채워야 하는지가 갈리고, 승인은 났는데 게이트가 안 열리는
+ * 상태가 된다 (Layer 2-8 개발 지시 §2). `src/backend/services/stage-mapper.ts`의
+ * `isGateRequired()`가 이 배열을 조회하는 유일한 함수다.
+ */
+export const GATE_REQUIRED_SKILLS: readonly SkillName[] = [SkillName.PLAN, SkillName.TEST];
+
 export const StageStatus = {
   PENDING: 'pending',
   IN_PROGRESS: 'in_progress',
   COMPLETED: 'completed',
 } as const;
 export type StageStatus = (typeof StageStatus)[keyof typeof StageStatus];
+
+/**
+ * CLAUDE.md "주요 단계 WIP = 1" 규칙 텍스트 — 저장하지 않고 항상 이 문자열로
+ * `wip_waivers.rule`을 비교한다. `PhaseService.checkWip()`과
+ * `StageService.start()` 가드 3단이 서로 다른 문자열을 쓰면 같은 면제를
+ * 두고도 한쪽만 `waived: true`를 보는 불일치가 생긴다 — 단일 원본으로 둔다.
+ */
+export const WIP_RULE = '주요 단계 WIP = 1';
 
 export const ArtifactStatus = {
   DRAFT: 'draft',

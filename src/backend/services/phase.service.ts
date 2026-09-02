@@ -1,19 +1,14 @@
 import type BetterSqlite3 from 'better-sqlite3';
-import { ErrorCode, SkillName } from '../../shared/constants.js';
+import { ErrorCode, type SkillName, WIP_RULE } from '../../shared/constants.js';
 import type {
   CreatePhaseInput,
   CreateWipWaiverInput,
-  GateInfo,
   PhaseCurrent,
-  StageSummary,
   WipViolation,
 } from '../../shared/types.js';
-import type {
-  PhaseRepository,
-  PhaseRow,
-  StageAggregateRow,
-} from '../repositories/phase.repository.js';
+import type { PhaseRepository, PhaseRow } from '../repositories/phase.repository.js';
 import { AppError } from '../utils/errors.js';
+import { STAGE_ORDER, sortBySkillOrder, toStageSummary } from './stage-mapper.js';
 
 /**
  * PhaseService (FR-029 진행 추적 · WIP)
@@ -36,7 +31,12 @@ import { AppError } from '../utils/errors.js';
  * CLAUDE.md 스킬 전환 모드: `plan→analyze`·`test→deploy`만 승인 필수.
  * DES-002 v2.1 §5 `GET /api/phases/current` 응답 예시가 `skill: "plan"`
  * 단계에 `gate.required: true`를 보여준다 — 게이트는 **전환을 시작하는
- * 단계**(plan, test)에 귀속된다. `GATE_REQUIRED_SKILLS`가 그 집합이다.
+ * 단계**(plan, test)에 귀속된다. 집합 자체(`GATE_REQUIRED_SKILLS`)의 단일
+ * 원본은 `shared/constants.ts`다. **여기서 복제하지 않는다** —
+ * `StageService`(착수 가드 2단, FR-030)가 같은 집합을 참조해야 어느 stage의
+ * `approvals.stage_id`에 `APV-GATE`를 채워야 하는지가 갈리지 않는다
+ * (Layer 2-8 개발 지시 §2). 판정 함수·`StageAggregateRow → StageSummary`
+ * 변환은 `./stage-mapper.js`로 승격했다.
  *
  * ── 트랜잭션 규칙 ──────────────────────────────────────────
  * `create()`·`ensurePhase()`는 Phase 행 + 7단계를 `db.transaction()`의
@@ -44,48 +44,6 @@ import { AppError } from '../utils/errors.js';
  * 동기라 async 래퍼 없이 트랜잭션 콜백에 바로 넣을 수 있다(Layer 2-6에서
  * 확립된 규칙 — `async` 메서드는 트랜잭션 콜백 안에서 값을 꺼낼 수 없다).
  */
-
-/** WIP=1 규칙 텍스트 — CLAUDE.md "주요 단계 WIP = 1" 그대로. 저장하지 않고 매번 이 문자열로 비교한다 */
-const WIP_RULE = '주요 단계 WIP = 1';
-
-/** CLAUDE.md 스킬 전환 모드에서 승인이 필수인 전환의 시작 단계 (DES-002 §5 예시 근거) */
-const GATE_REQUIRED_SKILLS: readonly SkillName[] = [SkillName.PLAN, SkillName.TEST];
-
-/** Phase당 정확히 7단계, CLAUDE.md SDLC 순서 그대로 (plan→analyze→…→operate) */
-const STAGE_ORDER: readonly SkillName[] = Object.values(SkillName);
-
-function isGateRequired(skill: string): boolean {
-  return (GATE_REQUIRED_SKILLS as readonly string[]).includes(skill);
-}
-
-function toGateInfo(row: StageAggregateRow): GateInfo {
-  return {
-    required: isGateRequired(row.skill),
-    approvalId: row.gate_approval_id,
-    passed: row.gate_status === 'approved',
-  };
-}
-
-function toStageSummary(row: StageAggregateRow): StageSummary {
-  return {
-    id: row.id,
-    skill: row.skill as SkillName,
-    status: row.status as StageSummary['status'],
-    startedAt: row.started_at,
-    completedAt: row.completed_at,
-    artifactCount: row.artifact_count,
-    pendingApprovalCount: row.pending_approval_count,
-    gate: toGateInfo(row),
-  };
-}
-
-/** STAGE_ORDER(CLAUDE.md SDLC 순서)로 정렬한다 — 7행뿐이라 SQL보다 TS 배열 정렬이 명확하다 */
-function sortBySkillOrder(rows: StageAggregateRow[]): StageAggregateRow[] {
-  const order = new Map(STAGE_ORDER.map((skill, idx) => [skill, idx]));
-  return [...rows].sort(
-    (a, b) => (order.get(a.skill as SkillName) ?? 0) - (order.get(b.skill as SkillName) ?? 0),
-  );
-}
 
 export class PhaseService {
   constructor(

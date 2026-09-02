@@ -198,39 +198,101 @@ export class PhaseRepository {
   }
 
   /**
-   * Phase의 7단계 + 교차 애그리거트 집계를 **한 쿼리**로 가져온다 (N+1 방지).
+   * `findStagesWithAggregates`·`findStageWithAggregates`(Layer 2-8 신규)가
+   * 공유하는 집계 SQL. `WHERE` 절만 호출자가 바꾼다 — 큰 JOIN을 두 벌 두면
+   * 스키마가 바뀔 때 한쪽만 고쳐지는 사고가 난다.
    * `ROW_NUMBER() OVER (PARTITION BY stage_id ORDER BY created_at DESC)`로
    * 단계별 최신 APV-GATE 승인 1건만 남긴다 — MAX(created_at) 서브쿼리 방식은
    * 동시각 생성 시 조인이 중복 행을 만들 수 있어 윈도 함수를 썼다.
+   */
+  private stageAggregateSql(whereClause: string): string {
+    return `SELECT
+         s.id, s.phase_id, s.skill, s.status, s.started_at, s.completed_at,
+         COALESCE(ac.cnt, 0) AS artifact_count,
+         COALESCE(pac.cnt, 0) AS pending_approval_count,
+         ga.id AS gate_approval_id,
+         ga.status AS gate_status
+       FROM stages s
+       LEFT JOIN (
+         SELECT stage_id, COUNT(*) AS cnt FROM artifacts GROUP BY stage_id
+       ) ac ON ac.stage_id = s.id
+       LEFT JOIN (
+         SELECT stage_id, COUNT(*) AS cnt FROM approvals
+          WHERE status = 'pending' GROUP BY stage_id
+       ) pac ON pac.stage_id = s.id
+       LEFT JOIN (
+         SELECT stage_id, id, status,
+                ROW_NUMBER() OVER (PARTITION BY stage_id ORDER BY created_at DESC) AS rn
+         FROM approvals
+         WHERE approval_type = 'APV-GATE'
+       ) ga ON ga.stage_id = s.id AND ga.rn = 1
+       WHERE ${whereClause}`;
+  }
+
+  /**
+   * Phase의 7단계 + 교차 애그리거트 집계를 **한 쿼리**로 가져온다 (N+1 방지).
    * 정렬(스킬 순서)은 호출자(Service)가 SkillName 순서로 재배열한다 — 7행
    * 뿐이라 SQL의 CASE...WHEN보다 TS 배열 정렬이 더 읽기 쉽다.
    */
   findStagesWithAggregates(phaseId: string): StageAggregateRow[] {
     return this.db
-      .prepare(
-        `SELECT
-           s.id, s.phase_id, s.skill, s.status, s.started_at, s.completed_at,
-           COALESCE(ac.cnt, 0) AS artifact_count,
-           COALESCE(pac.cnt, 0) AS pending_approval_count,
-           ga.id AS gate_approval_id,
-           ga.status AS gate_status
-         FROM stages s
-         LEFT JOIN (
-           SELECT stage_id, COUNT(*) AS cnt FROM artifacts GROUP BY stage_id
-         ) ac ON ac.stage_id = s.id
-         LEFT JOIN (
-           SELECT stage_id, COUNT(*) AS cnt FROM approvals
-            WHERE status = 'pending' GROUP BY stage_id
-         ) pac ON pac.stage_id = s.id
-         LEFT JOIN (
-           SELECT stage_id, id, status,
-                  ROW_NUMBER() OVER (PARTITION BY stage_id ORDER BY created_at DESC) AS rn
-           FROM approvals
-           WHERE approval_type = 'APV-GATE'
-         ) ga ON ga.stage_id = s.id AND ga.rn = 1
-         WHERE s.phase_id = ?`,
-      )
+      .prepare(this.stageAggregateSql('s.phase_id = ?'))
       .all(phaseId) as StageAggregateRow[];
+  }
+
+  /**
+   * 단계 1건 + 교차 애그리거트 집계 (Layer 2-8 신규 — `StageService.start()`·
+   * `complete()`가 응답 `StageSummary` 조립에 쓴다). `findStagesWithAggregates`를
+   * 7행 전부 가져와 필터링하지 않고, `WHERE s.id = ?`로 바로 좁힌다.
+   */
+  findStageWithAggregates(stageId: string): StageAggregateRow | null {
+    const row = this.db.prepare(this.stageAggregateSql('s.id = ?')).get(stageId) as
+      | StageAggregateRow
+      | undefined;
+    return row ?? null;
+  }
+
+  /** 단계 1건 조회 (StageService 착수 가드 전용) */
+  findStageById(id: string): StageRow | null {
+    const row = this.db.prepare('SELECT * FROM stages WHERE id = ?').get(id) as
+      | StageRow
+      | undefined;
+    return row ?? null;
+  }
+
+  /**
+   * Phase의 7단계를 집계 없이 가져온다 (Layer 2-8 신규). `StageService.start()`의
+   * 가드 1(직전 단계가 completed인가)이 스킬 순서로 정렬해 바로 앞 단계를
+   * 찾는 데만 쓴다 — 집계(artifact·approval JOIN)가 필요 없어
+   * `findStagesWithAggregates`보다 가볍다.
+   */
+  findStagesByPhase(phaseId: string): StageRow[] {
+    return this.db.prepare('SELECT * FROM stages WHERE phase_id = ?').all(phaseId) as StageRow[];
+  }
+
+  /**
+   * 단계 착수 (FR-030). `status='in_progress'`·`started_at` 갱신까지만 하고
+   * `phases.current_stage`는 별도 메서드(`updateCurrentStage`)다 — 둘 다
+   * `StageService.start()`가 같은 트랜잭션 콜백 안에서 순서대로 호출한다.
+   */
+  startStage(id: string, startedAt: string): StageRow {
+    this.db
+      .prepare("UPDATE stages SET status = 'in_progress', started_at = ? WHERE id = ?")
+      .run(startedAt, id);
+    return this.findStageById(id) as StageRow;
+  }
+
+  /** 단계 완료 (FR-030). `in_progress → completed`만 호출자가 보장한다(가드는 Service) */
+  completeStage(id: string, completedAt: string): StageRow {
+    this.db
+      .prepare("UPDATE stages SET status = 'completed', completed_at = ? WHERE id = ?")
+      .run(completedAt, id);
+    return this.findStageById(id) as StageRow;
+  }
+
+  /** `phases.current_stage` 갱신 — 착수한 단계의 skill을 기록한다 (DES-004 §16) */
+  updateCurrentStage(phaseId: string, skill: string): void {
+    this.db.prepare('UPDATE phases SET current_stage = ? WHERE id = ?').run(skill, phaseId);
   }
 
   countInProgressStages(phaseId: string): number {
