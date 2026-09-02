@@ -195,6 +195,10 @@ describe('PATCH /api/projects/:id/status — FR-006', () => {
 
     expect(res.statusCode).toBe(422);
     expect(res.json().code).toBe('INVALID_TRANSITION');
+
+    // CLI가 "지금 가능한 것"을 출력할 수 있어야 한다 (DES-006 SCR-P04).
+    // 한국어 메시지 파싱이 아니라 구조화된 필드로 받는다 (2026-09-02 대표 결정).
+    expect(res.json().details.allowedTransitions).toEqual(['running', 'cancelled']);
   });
 
   it('Given 존재하지 않는 프로젝트 When 상태 변경하면 Then 404 PROJECT_NOT_FOUND', async () => {

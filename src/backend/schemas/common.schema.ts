@@ -14,12 +14,14 @@ export const commonSchemas = {
     timestamp: { type: 'string', format: 'date-time' },
     error: {
       type: 'object',
+      // required는 4필드 그대로다. details는 선택이며 필요할 때만 붙는다
       required: ['statusCode', 'error', 'message', 'code'],
       properties: {
         statusCode: { type: 'integer' },
         error: { type: 'string' },
         message: { type: 'string' },
         code: { type: 'string' },
+        details: { type: 'object', additionalProperties: true },
       },
     },
     pagination: {

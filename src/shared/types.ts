@@ -64,11 +64,23 @@ export interface CursorResponse<T> {
   };
 }
 
+/**
+ * 에러 응답
+ *
+ * `details`는 **선택**이다. 평소에는 4필드만 나가고, 클라이언트가 구조적으로
+ * 써야 하는 부가 정보가 있을 때만 붙는다.
+ *
+ * 왜 필요한가: DES-006 SCR-P04가 불허 전이 시 CLI에 "허용 목록 출력"을
+ * 요구하는데, 그 목록을 한국어 메시지 문장에서 파싱하게 두면 문구를 다듬는
+ * 순간 깨진다. 4필드 고정(DES-009)과 `allowedTransitions` 전달(DES-004 §6)이
+ * 충돌해 대표 결정으로 선택 필드를 추가했다 (2026-09-02).
+ */
 export interface ErrorResponse {
   statusCode: number;
   error: string;
   message: string;
   code: string;
+  details?: Record<string, unknown>;
 }
 
 // ─────────────────────────────────────────────

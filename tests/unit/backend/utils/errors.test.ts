@@ -47,6 +47,33 @@ describe('toErrorResponse — 4필드 고정', () => {
     expect(r.message).not.toContain('secret.db');
   });
 
+  it('details가 없으면 4필드 그대로다', () => {
+    const r = toErrorResponse(new AppError(404, ErrorCode.PROJECT_NOT_FOUND, '없음'));
+    expect(Object.keys(r).sort()).toEqual(['code', 'error', 'message', 'statusCode']);
+  });
+
+  it('details가 있으면 5번째 필드로 붙는다 (2026-09-02 대표 결정)', () => {
+    // DES-006 SCR-P04가 불허 전이 시 CLI에 "허용 목록 출력"을 요구한다.
+    // 목록을 한국어 메시지에서 파싱하게 두면 문구를 다듬는 순간 깨진다.
+    const r = toErrorResponse(
+      new AppError(422, ErrorCode.INVALID_TRANSITION, '불가능한 전이', {
+        allowedTransitions: ['running', 'cancelled'],
+      }),
+    );
+
+    expect(Object.keys(r).sort()).toEqual(['code', 'details', 'error', 'message', 'statusCode']);
+    expect(r.details).toEqual({ allowedTransitions: ['running', 'cancelled'] });
+  });
+
+  it('메시지에 허용 목록을 넣지 않는다 — details가 원본이다', () => {
+    const r = toErrorResponse(
+      new AppError(422, ErrorCode.INVALID_TRANSITION, '허용되지 않는 상태 전이입니다: ready → x', {
+        allowedTransitions: ['running'],
+      }),
+    );
+    expect(r.message).not.toContain('running');
+  });
+
   it('상태 코드별 error 문구를 매핑한다', () => {
     expect(toErrorResponse(new AppError(400, ErrorCode.VALIDATION_ERROR, 'x')).error).toBe(
       'Bad Request',

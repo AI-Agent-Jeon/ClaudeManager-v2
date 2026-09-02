@@ -122,7 +122,9 @@ export class ProjectService {
       throw new AppError(
         422,
         ErrorCode.INVALID_TRANSITION,
-        `허용되지 않는 상태 전이입니다: ${fromStatus} → ${newStatus} (허용: ${allowed.join(', ') || '없음'})`,
+        // 허용 목록은 details로 나간다. 메시지에 넣으면 클라이언트가
+        // 한국어 문장을 파싱해야 하고, 문구를 다듬는 순간 깨진다.
+        `허용되지 않는 상태 전이입니다: ${fromStatus} → ${newStatus}`,
         { allowedTransitions: allowed },
       );
     }

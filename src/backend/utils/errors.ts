@@ -42,6 +42,8 @@ export function toErrorResponse(err: unknown): ErrorResponse {
       error: STATUS_TEXT[err.statusCode] ?? 'Error',
       message: err.message,
       code: err.code,
+      // 없으면 키 자체를 넣지 않는다 — 평소 응답은 4필드 그대로다
+      ...(err.details ? { details: err.details } : {}),
     };
   }
 

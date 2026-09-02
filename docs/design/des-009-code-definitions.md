@@ -1,7 +1,7 @@
 # DES-009 코드 정의서
 
 > Phase 1: 기반 구축
-> 버전: **v3.1 (2026-09-02)** — 교차 검증 정정. Enum 12종을 TypeScript 코드 블록에 전건 반영
+> 버전: **v3.2 (2026-09-02)** — 에러 응답에 선택 필드 `details` 추가 (대표 결정)
 > **원본**: [Notion DES-009](https://app.notion.com/p/3c5d066504ec814488cbfec3661f0667) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -205,8 +205,27 @@ interface ErrorResponse {
   error: string;
   message: string;
   code: string;
+  /** 선택 — 클라이언트가 구조적으로 써야 하는 부가 정보 (v3.2) */
+  details?: Record<string, unknown>;
 }
 ```
+
+> **⚠ `details`는 선택 필드다 (v3.2 · 2026-09-02 대표 결정).**
+> **필수는 여전히 4필드**이고, `details`는 필요한 응답에만 붙는다. 평소 응답 형태는 바뀌지 않는다.
+>
+> **왜 추가했나** — 설계서 3건이 서로 다른 말을 하고 있었다.
+>
+> | 문서 | 내용 |
+> |------|------|
+> | 본 문서 (v3.1) | 에러 응답은 **4필드 고정** |
+> | DES-004 v2.2 §6 | `throw INVALID_TRANSITION { allowedTransitions }` — 허용 전이 목록을 **별도로** 전달 |
+> | DES-006 v3.1 SCR-P04 | 불허 전이 시 CLI가 **"✗ + 허용 목록 출력"** |
+>
+> 셋을 동시에 만족할 수 없었다. 임시로 허용 목록을 한국어 `message` 문장에 넣어 두었으나, **CLI가 문장을 파싱해야 목록을 얻으므로 문구를 다듬는 순간 깨진다.**
+>
+> 대안이던 "CLI가 실패 후 `GET /api/projects/:id`를 다시 호출"은 왕복이 늘고, 실패한 전이 시점의 상태와 재조회 시점의 상태가 다를 수 있다.
+>
+> **현재 사용처**: `INVALID_TRANSITION`의 `allowedTransitions`. 다른 에러는 붙이지 않는다 — 남용하면 4필드 계약이 사실상 무의미해진다.
 
 ### 공통 에러 코드
 
@@ -588,3 +607,4 @@ Phase 1에서는 에이전트 유형을 자유 텍스트로 입력받는다. 향
 | — | 2026-09-01 | Git 동기화 + 승인 반영 필요 Enum·에러코드 정리 |
 | **v3.0** | 2026-09-01 | **승인 반영 개정.** 대화·승인·진행 **Enum 12종** + **에러 코드 9종** + WebSocket close code 3종 확정.<br>**초안 대비 3건 정정** — `ApprovalStatus`에서 `expired` 제외(전이 맵에 없음), `DecisionLevel.low`는 적재하지 않음을 명시, `WaitingReason` 2종 → **3종**(무기한 대기와 30분 타임아웃 구분).<br>`EntityType` 3종 확장, `AgentStatus.waiting`에 사유 필드 표기, `ERROR_CODES` 상수 9종 추가. 미해결 2건 등록 |
 | **v3.1** | 2026-09-02 | **교차 검증 정정 — 본문 표와 코드 블록의 불일치 해소.** v3.0은 본문 표에만 Enum 12종을 확정하고 `## TypeScript 타입 정의` 코드 블록은 v2 상태(4종)로 두었다. develop이 이 블록으로 `src/shared/types.ts`를 만들면 **12종이 통째로 누락**되므로 코드 블록에 전건 반영했다.<br>`EntityType` 코드 블록 3종 → **6종**(본문 표와 일치), `StoredDecisionLevel` 보조 타입·`WsCloseCode` 상수 신설.<br>**D-19 경고 정정**(터널링 Phase 2 연기 → `DEFAULT_HOST` 전제 유효), Phase 2+ 확장표 **FR-018 Phase 2 → 1**(예상 Enum값 폐기 — 확정값과 달랐다) · **FR-015 Phase 4 → 2** |
+| **v3.2** | 2026-09-02 | **에러 응답에 선택 필드 `details` 추가 (대표 결정).** develop Layer 2-2 구현 중 **본 문서(4필드 고정) · DES-004 §6(`allowedTransitions` 전달) · DES-006 SCR-P04(CLI 허용 목록 출력)가 서로 만족 불가**한 것이 드러났다.<br>임시 우회로 허용 목록을 한국어 `message`에 넣었으나 **CLI가 문장을 파싱해야 해서** 문구 변경에 취약했다. 대안(CLI 재조회)은 왕복 증가 + 상태 불일치 위험이 있어 기각.<br>**필수는 4필드 그대로**이고 `details`는 필요한 응답에만 붙는다. 현재 사용처는 `INVALID_TRANSITION`의 `allowedTransitions` 하나뿐 — 남용하면 4필드 계약이 무의미해진다 |

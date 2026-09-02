@@ -1,7 +1,7 @@
 # DES-002 API 명세서
 
 > Phase 1: 기반 구축
-> 버전: **v2.1 (2026-09-02)** — 교차 검증 반영. Phase 1 엔드포인트 31 → 33종 (R-01 · R-07)
+> 버전: **v2.2 (2026-09-02)** — 공통 에러 스키마에 선택 필드 `details` 추가 (DES-009 v3.2)
 > **원본**: [Notion DES-002](https://app.notion.com/p/3c5d066504ec81958497d54fc5ab9fd3) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -519,12 +519,14 @@ const commonSchemas = {
     timestamp: { type: 'string', format: 'date-time' },
     error: {
       type: 'object',
+      // required는 4필드 그대로다. details는 선택이며 필요한 응답에만 붙는다 (v2.2)
       required: ['statusCode', 'error', 'message', 'code'],
       properties: {
         statusCode: { type: 'integer' },
         error:      { type: 'string' },
         message:    { type: 'string' },
-        code:       { type: 'string' }
+        code:       { type: 'string' },
+        details:    { type: 'object', additionalProperties: true }
       }
     },
     pagination: {

@@ -2,7 +2,7 @@
 
 > Phase 1: 기반 구축
 > 문서코드: DES-004
-> 버전: **v2.2 (2026-09-02)** — 교차 검증 반영. 부트스트랩 시퀀스 신설 + 승인↔Agent 연동 명시
+> 버전: **v2.3 (2026-09-02)** — `allowedTransitions` 전달 경로를 `details` 필드로 확정 (DES-009 v3.2)
 > **원본**: [Notion DES-004](https://app.notion.com/p/3c5d066504ec81d08e30df63322e4e98) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -660,7 +660,7 @@ sequenceDiagram
     S->>SM: validateTransition("project", "ready", "running")
     alt 전이 불가
         SM-->>S: false
-        S-->>R: throw INVALID_TRANSITION { allowedTransitions }
+        S-->>R: throw INVALID_TRANSITION { details: { allowedTransitions } }
         R-->>AC: 422
     else 전이 가능
         SM-->>S: true
@@ -684,6 +684,10 @@ sequenceDiagram
 | Repository | `projectRepo.updateStatus(id, status, updatedAt)` | `string, string, string` | `ProjectRow` | Drizzle update + returning |
 
 ```typescript
+// ⚠ allowedTransitions는 에러 응답의 details 필드로 나간다 (v2.3 · 2026-09-02).
+// DES-009 v3.2가 4필드 고정에 선택 필드 details를 추가한 근거가 이 전달이다 —
+// DES-006 SCR-P04의 "허용 목록 출력"을 한국어 message 파싱 없이 하기 위해서다.
+
 // StateMachine — 순수 함수 (외부 의존 없음)
 function validateTransition(
   entityType: EntityType,
