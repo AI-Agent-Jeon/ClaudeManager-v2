@@ -1,6 +1,8 @@
 # Phase Progress
 
-> **Notion 미러**: [00. 진행 상황](https://app.notion.com/p/3ced066504ec811e9517ef92b0118060) — 이 문서 변경 시 함께 갱신한다.
+> **원본**: [Notion 00. 진행 상황](https://app.notion.com/p/3ced066504ec811e9517ef92b0118060) · Git 동기화 2026-09-02
+> 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
+> 이 문서 변경 시 Notion 미러를 함께 갱신한다.
 
 ## 현재 상태
 
