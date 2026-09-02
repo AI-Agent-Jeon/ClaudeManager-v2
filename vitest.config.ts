@@ -12,7 +12,16 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json-summary', 'html'],
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.d.ts', 'src/frontend/**', 'src/**/index.ts'],
+      exclude: [
+        'src/**/*.d.ts',
+        'src/frontend/**',
+        'src/shared/index.ts',
+        // 타입 선언만 있는 파일 — 컴파일 후 런타임 코드가 남지 않아 실행할 것이 없다
+        'src/shared/types.ts',
+        // 프로세스 진입점. listen·시그널 처리라 단위 테스트로 실행하지 않는다.
+        // ⚠ Graceful Shutdown이 커버리지에서 빠진다 — 통합 테스트(test 스킬)에서 다룬다
+        'src/backend/server.ts',
+      ],
       // DES 기준: 전체 70% / Must 스토리 관련 코드 80%
       thresholds: {
         lines: 70,
