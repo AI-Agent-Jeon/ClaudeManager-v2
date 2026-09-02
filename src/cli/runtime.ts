@@ -171,9 +171,37 @@ export function toIdLookupFailure(
   return { ok: false, reason: 'ambiguous', candidates: resolved.candidates };
 }
 
-/** §8 "토큰 없음"·"만료" 이외의 존재 실패 — 엔티티별 라벨만 바꿔 쓴다 */
+/** 완성형 한글 음절(U+AC00~U+D7A3) 범위 — `chooseParticle`의 받침 판정 기준 */
+const HANGUL_SYLLABLE_BASE = 0xac00;
+const HANGUL_SYLLABLE_LAST = 0xd7a3;
+
+/**
+ * 한글 받침 유무로 "을"/"를"을 고른다 — 완성형 한글 음절의 코드 포인트를
+ * 28로 나눈 나머지가 0이면 종성이 없다(받침 없음).
+ * 라벨이 한글 음절로 끝나지 않으면(영문 등) 기존 동작을 유지한다 — "Agent"·
+ * "Project"는 발음("에이전트"·"프로젝트")이 받침 없는 "트"로 끝나 "를"이
+ * 맞았고, 그 라벨들의 출력은 이 함수 도입 전과 동일하게 유지된다.
+ */
+function chooseParticle(label: string, withBatchim: string, withoutBatchim: string): string {
+  const last = label.trimEnd().slice(-1);
+  const code = last.codePointAt(0) ?? 0;
+  if (code >= HANGUL_SYLLABLE_BASE && code <= HANGUL_SYLLABLE_LAST) {
+    const hasBatchim = (code - HANGUL_SYLLABLE_BASE) % 28 !== 0;
+    return hasBatchim ? withBatchim : withoutBatchim;
+  }
+  return withoutBatchim;
+}
+
+/**
+ * §8 "토큰 없음"·"만료" 이외의 존재 실패 — 엔티티별 라벨만 바꿔 쓴다.
+ *
+ * `를`을 하드코딩했던 이전 버전은 "승인 건를"·"대화 채널를"처럼 받침 있는
+ * 라벨에서 조사가 틀렸다(Layer 3-2 그룹 D 개발 지시 §4 — 그룹 B·C에 걸친
+ * 사전 결함). `chooseParticle`로 받침 유무를 판정해 "을"/"를"을 고른다.
+ */
 export function notFoundBlock(label: string, id: string, hint: string): string {
-  return errorBlock(`${label}를 찾을 수 없습니다: ${id}`, hint);
+  const particle = chooseParticle(label, '을', '를');
+  return errorBlock(`${label}${particle} 찾을 수 없습니다: ${id}`, hint);
 }
 
 // ─────────────────────────────────────────────

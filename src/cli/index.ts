@@ -6,6 +6,7 @@ import { registerAgentCommand } from './commands/agent.js';
 import { registerApprovalCommand } from './commands/approval.js';
 import { registerAuthCommand } from './commands/auth.js';
 import { registerChatCommand } from './commands/chat.js';
+import { registerProgressCommand } from './commands/progress.js';
 import { registerProjectCommand } from './commands/project.js';
 import { registerStatusChangeCommand } from './commands/status-changes.js';
 import { registerTaskCommand } from './commands/task.js';
@@ -20,9 +21,9 @@ import { registerTaskCommand } from './commands/task.js';
  * `project`·`agent`·`task`·`status-changes`(SCR-P01~SC01, 기본 CRUD 14개
  * 명령)를, 그룹 B가 `chat`(SCR-CH01~03·11~13, 대화 6개 명령)을, 그룹 C가
  * `inbox`·`decide`·`approvals`·`review`(SCR-CH04·05·07·08, 승인 4개 명령 —
- * 전부 최상위 명령이다)를 이어 붙였다. `progress`·`stage`·`artifacts`
- * (그룹 D)는 여전히 자리만 비워 둔다 — 동작하지 않는 명령이 `--help`에
- * 나타나면 대표가 실행해보고서야 미구현임을 알게 된다.
+ * 전부 최상위 명령이다)를, 그룹 D가 `progress`·`stage`(start·complete)·
+ * `artifacts`(SCR-CH06·09·14·10, 진행 4개 명령)를 이어 붙였다 — CLI
+ * 33화면(Phase 1 develop 마지막 그룹) 완결.
  */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -52,7 +53,7 @@ export function buildProgram(): Command {
   registerStatusChangeCommand(program);
   registerChatCommand(program);
   registerApprovalCommand(program);
-  // 그룹 D에서 여기에 이어 붙인다: registerProgressCommand(program)
+  registerProgressCommand(program);
 
   return program;
 }

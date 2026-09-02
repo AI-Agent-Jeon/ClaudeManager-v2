@@ -225,6 +225,39 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   행이 없어 입력 형식·기본값·응답별 결과가 정의되지 않은 명세 공백이라 구현하지 않았다 — 플래그 없이
   호출하면 사용법을 안내하고 exit 1(미해결 사항 참조). `conditional`도 명령 표에 없어 지원하지 않는다
 
+**CLI (Layer 3-2 그룹 D)** — `cm progress`·`cm stage start/complete`·`cm artifacts` 진행 4개 명령
+(Phase 1 develop의 마지막 그룹 — **CLI 33화면 완결**)
+- `src/cli/commands/progress.ts`(DES-008 배치 계약 — 4화면을 파일 하나에) — 그룹 A·B·C와 같은 관용구를
+  그대로 따른다. DES-014 §6의 ASCII 그리드 출력 예시(`▓ analyze` 등)는 쓰지 않는다 — `cm review`(그룹 C)가
+  DES-014의 ASCII 박스 대신 `output.ts` 관용구를 따른 선례와 같은 이유로, 7단계 보드도 `renderTable`
+  행으로 만든다
+- `cm progress`(SCR-CH06) — Phase 번호·이름·현재 단계 + 7단계 표(스킬명·상태·산출물 건수·승인대기
+  건수·게이트·시작~완료일) + 게이트 미통과 경고(EVT-CH06-3, `plan → analyze` 형태로 다음 단계명을
+  스킬 순서에서 도출) + WIP 위반 블록(EVT-CH06-2). **위반은 면제(`waived: true`)가 있어도 계속
+  보고한다** — 조회 시점 계산값을 감추지 않는다(개발 지시 §3(1)). Phase 시작일·경과일수는 API 응답에
+  없는 필드라(`PhaseCurrent.phase`엔 `startedAt`이 없다) `plan` 단계(SDLC 첫 단계)의 `startedAt`을
+  대리값으로 쓴다(등급 낮음, 자율 판단 — 백엔드는 완결 범위라 응답을 넓히지 않는다)
+- `cm progress --waive "<사유>"` — DES-014 §6 CLI 출력 예시가 안내하는 실제 동작(`POST
+  /api/wip-waivers`, `phaseId`+`rule`(`WIP_RULE` 단일 원본)+`reason`). 사유 공백은 서버 호출 전에 CLI가
+  막는다(왕복 절감)
+- `cm stage start <skill>`(SCR-CH09) — **CLAUDE.md 스킬 전환 게이트의 유일한 강제 지점**인 `POST
+  /api/stages/:id/start`의 3단 가드 실패를 대표가 이해할 수 있게 번역한다. `AppError`가 `details`를
+  싣지 않아(`stage.service.ts` 확인) 착수 직전에 조회한 `GET /api/phases/current` 스냅숏을 그대로
+  들고 있다가 에러 시 그 스냅숏에서 재구성한다 — **필요한 승인 ID**(`GATE_NOT_PASSED`, 승인 건 자체가
+  없으면 "아직 상정되지 않았습니다"로 구분) · **직전 단계명+상태**(`INVALID_TRANSITION`) ·
+  **진행 중인 다른 단계명**(`WIP_VIOLATION`, `cm progress --waive` 안내). `<skill>`은 서버에 보내기
+  전에 CLI가 7개 유효값으로 검증한다(§3(4))
+- `cm stage complete <skill>`(SCR-CH14) — 가드는 상태 검사(`in_progress`인가) 하나뿐이다(R-03 "게이트
+  강제는 `start` 한 곳에서만"). 완료 후 "`current_stage`는 바뀌지 않는다, 다음 단계는 `cm stage start
+  <skill>`로 착수하라" 고지를 함께 출력한다(EVT-CH14-1)
+- `cm artifacts [--sync <상태>]`(SCR-CH10) — `notion_only`·`missing`을 표에서 구분해 표시하고,
+  `notion_only`가 있으면 "동기화 누락이지 프로세스 위반이 아니다" 경고블록을 붙인다(`cm review`와 표기
+  일치, 개발 지시 §3(3))
+- `src/cli/runtime.ts`의 `notFoundBlock()` — 조사 "를"을 하드코딩해 "승인 건를"·"대화 채널를"처럼
+  받침 있는 라벨에서 틀리던 것을 받침 유무(`chooseParticle`, 완성형 한글 음절 코드포인트 28로 나눈
+  나머지)로 "을"/"를"을 고르도록 교정(그룹 B·C에 걸친 사전 결함 — 공용 헬퍼라 아무도 손대지 않고
+  있었다). 한글 음절로 끝나지 않는 라벨(`Agent`·`Project`)은 기존 동작(을 "를")을 그대로 유지한다
+
 ### Changed
 
 - **`GATE_REQUIRED_SKILLS`를 단일 원본으로 승격** — `phase.service.ts`의 모듈 지역 상수였던 것을
@@ -261,6 +294,11 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 - **`cm project status --set`·`cm agent status --set`이 캐스케이드 대상이 아닐 때 "이전상태"를 빈 문자열로 보여주던 문제** — `--set cancelled`일 때만 전이 전 스냅샷을 조회하도록 짜여 있어, 그 외 모든 전이(예: `ready → running`)가 `전이:  → running`처럼 출력됐다. 전이 전 상태 조회를 캐스케이드 여부와 무관하게 항상 수행하도록 교정 — 실제 백엔드로 14개 명령을 손으로 돌리다 발견했다(개발 지시 §6 항목 5)
 - **`cm chat list`·`cm chat search`의 표가 열이 정렬되지 않던 문제** — 헤더 행만 `padEnd`로 폭을 맞추고 본문 행은 셀을 그대로 `join`해, ID·상태·미읽음 컬럼이 값 길이만큼 들쭉날쭉하게 출력됐다. `chat list`는 `output.ts`의 `renderTable()`을 그대로 쓰도록 교정하고, 아카이브 행만 렌더링 후 줄 단위로 `dim()`을 씌운다(셀 안에 먼저 ANSI 이스케이프를 넣으면 그 바이트 수까지 `padEnd`가 폭 계산에 넣어 표가 다시 깨진다). `chat search`는 `snippet`이 `<mark>`를 ANSI로 바꾼 가변 길이 강조 텍스트라 애초에 고정폭 표에 맞지 않아, 행 블록 형태로 바꿨다 — 실제 백엔드를 띄워 6개 명령을 손으로 돌리는 과정(개발 지시 §6 항목 5)에서 발견했다
 - `resolveExportPath()`가 상위 탈출 검사 시 `cwd` 원문을 그대로 비교해, 호출부가 넘긴 `process.cwd()`가 아닌 형식(예: 드라이브 문자 없는 경로)이면 정상 경로도 오탐으로 거부될 수 있었다 — 비교 기준(`cwd`)도 대상(`target`)과 같은 방식으로 먼저 정규화하도록 교정 (테스트 작성 중 발견)
+- **`cm stage start`의 `INVALID_TRANSITION` 안내가 직전 단계가 `pending`일 때도 "cm stage complete
+  <직전단계>"를 권하던 문제** — 아직 착수도 안 한 단계를 완료하라고 안내하면 그 자체가 또
+  `INVALID_TRANSITION`이 난다. 직전 단계 상태가 `in_progress`일 때만 "complete"를, `pending`이면
+  "start"를 권하도록 교정 — 실제 백엔드를 띄워 게이트 3단 가드를 손으로 재현하는 과정(개발 지시 §8
+  항목 5)에서 발견했다
 
 ### Security
 
@@ -283,9 +321,9 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 ### 미반영 (Phase 1 잔여)
 
 - WebSocket 엔드포인트 (`WS /ws`, `WS /ws/conversations/:id`) — Hub만 구현됨. `approval:created`·`approval:updated` 브로드캐스트 호출은 있으나 실제 소켓 라우트 배선은 다음 계층. `cm chat main/agent`도 이 때문에 REPL 안에서 실시간 수신을 하지 않는다(전송 + 확인까지만, 개발 지시 §2(1))
-- CLI 명령 그룹 — `cm progress`·`cm stage`·`cm artifacts` (`cm auth`는 Layer 3-1, `cm project`·`cm agent`·
-  `cm task`·`cm status-changes`는 그룹 A, `cm chat`은 그룹 B, `cm inbox`·`cm decide`·`cm approvals`·
-  `cm review`는 그룹 C에서 구현됨. 그룹 D 잔여)
+- **CLI 명령 그룹 33화면 전부 구현 완료** (`cm auth`는 Layer 3-1, `cm project`·`cm agent`·`cm task`·
+  `cm status-changes`는 그룹 A, `cm chat`은 그룹 B, `cm inbox`·`cm decide`·`cm approvals`·`cm review`는
+  그룹 C, `cm progress`·`cm stage start/complete`·`cm artifacts`는 그룹 D) — Phase 1 develop 잔여 없음
 - `cm decide <id>`를 플래그 없이 호출했을 때의 `PRM-CH01` 대화형 프롬프트(EVT-CH05-5, "안건 요약 +
   선택지 + [승인/반려/취소]") — DES-006 §5 프롬프트 명세 표에 PRM-CH01 행이 없어 입력 형식·기본값·
   응답별 결과가 정의되지 않은 명세 공백이다. 현재는 플래그 없이 호출하면 두 플래그 사용법을 안내하고

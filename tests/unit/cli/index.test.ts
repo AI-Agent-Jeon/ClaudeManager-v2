@@ -31,6 +31,28 @@ describe('buildProgram', () => {
     expect(subNames).toEqual(expect.arrayContaining(['login', 'logout', 'status']));
   });
 
+  it('CLI 33화면 — 8개 명령 그룹이 전부 등록되어 있다 (그룹 A~D 완결, §완료 판정 기준 6)', () => {
+    const program = buildProgram();
+    const names = program.commands.map((c) => c.name());
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'auth',
+        'project',
+        'agent',
+        'task',
+        'status-changes',
+        'chat',
+        'inbox',
+        'decide',
+        'approvals',
+        'review',
+        'progress',
+        'stage',
+        'artifacts',
+      ]),
+    );
+  });
+
   it('--help를 처리하고 exit 0으로 끝난다', async () => {
     const program = buildProgram();
     program.exitOverride();

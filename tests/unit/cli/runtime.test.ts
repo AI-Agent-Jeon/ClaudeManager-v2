@@ -9,6 +9,7 @@ import {
   cascadeBlock,
   checkAuth,
   diffCascade,
+  notFoundBlock,
   resolveId,
   toIdLookupFailure,
 } from '../../../src/cli/runtime.js';
@@ -195,6 +196,37 @@ describe('diffCascade', () => {
     const before = [{ id: '1', status: 'running', name: 'A' }];
     const result = diffCascade(before, [], (a) => a.name);
     expect(result).toEqual([]);
+  });
+});
+
+describe('notFoundBlock', () => {
+  // 그룹 D 개발 지시 §4 — 받침 있는 라벨("건"·"널")은 "을", 받침 없는
+  // 라벨("Agent"·"Project", 발음상 받침 없는 "트"로 끝남)은 "를"이어야 한다.
+  it('받침 있는 한글 라벨은 "을"을 쓴다 (승인 건)', () => {
+    expect(notFoundBlock('승인 건', 'ap123456', 'cm approvals')).toBe(
+      '✗ 승인 건을 찾을 수 없습니다: ap123456\n  cm approvals',
+    );
+  });
+
+  it('받침 있는 한글 라벨은 "을"을 쓴다 (대화 채널)', () => {
+    expect(notFoundBlock('대화 채널', 'ch123456', 'cm chat list')).toBe(
+      '✗ 대화 채널을 찾을 수 없습니다: ch123456\n  cm chat list',
+    );
+  });
+
+  it('받침 없는 한글 라벨은 "를"을 쓴다 (단계)', () => {
+    expect(notFoundBlock('단계', 'st123456', 'cm progress')).toBe(
+      '✗ 단계를 찾을 수 없습니다: st123456\n  cm progress',
+    );
+  });
+
+  it('영문 라벨은 기존과 동일하게 "를"을 쓴다 (Agent·Project — 회귀 방지)', () => {
+    expect(notFoundBlock('Agent', 'ag123456', 'cm agent list')).toBe(
+      '✗ Agent를 찾을 수 없습니다: ag123456\n  cm agent list',
+    );
+    expect(notFoundBlock('Project', 'pr123456', 'cm project list')).toBe(
+      '✗ Project를 찾을 수 없습니다: pr123456\n  cm project list',
+    );
   });
 });
 
