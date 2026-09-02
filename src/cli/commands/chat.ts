@@ -38,6 +38,7 @@ import {
   type CommandDeps,
   checkAuth,
   defaultCommandDeps,
+  mapCommonApiError,
   notFoundBlock,
   presentAuthGuardFailure,
   serverUnreachableBlock,
@@ -278,16 +279,7 @@ export async function runChatMainOpen(opts: { client: CliApiClient }): Promise<C
     const messages = await fetchRecentMessages(opts.client, conversation.id);
     return { ok: true, conversation, messages };
   } catch (err) {
-    if (err instanceof ServerUnreachableError) {
-      return { ok: false, reason: 'server_unreachable', serverUrl: opts.client.baseUrl };
-    }
-    if (
-      err instanceof ApiRequestError &&
-      (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED)
-    ) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
-    throw err;
+    return mapCommonApiError(err, opts.client);
   }
 }
 
@@ -317,12 +309,19 @@ export async function runChatAgentOpen(opts: {
     return { ok: false, reason: 'no_conversation', agentId: agent.id };
   }
 
-  const readonly = isAgentChannelReadonly(agent.status);
-  const messages = readonly
-    ? await fetchAllMessagesChronological(opts.client, agent.conversationId)
-    : await fetchRecentMessages(opts.client, agent.conversationId);
+  // REV-H-04 — `runChatMainOpen`(위)은 같은 메시지 조회를 try로 감쌌는데
+  // 여기만 빠져 있었다. Agent 조회 성공 후 서버가 끊기면 선언된
+  // `server_unreachable` 분기 대신 generic 에러로 uncaught 전파됐다.
+  try {
+    const readonly = isAgentChannelReadonly(agent.status);
+    const messages = readonly
+      ? await fetchAllMessagesChronological(opts.client, agent.conversationId)
+      : await fetchRecentMessages(opts.client, agent.conversationId);
 
-  return { ok: true, agent, messages, readonly };
+    return { ok: true, agent, messages, readonly };
+  } catch (err) {
+    return mapCommonApiError(err, opts.client);
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -439,21 +438,16 @@ type SendTargetResult =
   | { ok: true; conversationId: string; conversationTitle: string }
   | Exclude<ChatSendResult, { ok: true }>;
 
-/** 인증·서버 unreachable 공통 매핑 — `resolveSendTarget`·`runChatSend` 둘 다 쓴다 */
+/**
+ * 인증·서버 unreachable 공통 매핑 — `resolveSendTarget`·`runChatSend` 둘 다 쓴다.
+ * REV-L-07 — `runtime.ts`의 `mapCommonApiError`(REV-H-03 도입)와 완전히 같은
+ * 모양이라 그 헬퍼에 위임한다.
+ */
 function mapChatAuthError(
   err: unknown,
   client: CliApiClient,
 ): Exclude<ChatSendResult, { ok: true }> {
-  if (err instanceof ServerUnreachableError) {
-    return { ok: false, reason: 'server_unreachable', serverUrl: client.baseUrl };
-  }
-  if (
-    err instanceof ApiRequestError &&
-    (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED)
-  ) {
-    return { ok: false, reason: 'unauthenticated' };
-  }
-  throw err;
+  return mapCommonApiError(err, client);
 }
 
 /**
@@ -577,16 +571,7 @@ export async function runChatList(opts: {
     const res = await opts.client.get<{ data: Conversation[] }>(`/conversations${suffix}`);
     return { ok: true, items: res.data, type: opts.type, status: opts.status };
   } catch (err) {
-    if (err instanceof ServerUnreachableError) {
-      return { ok: false, reason: 'server_unreachable', serverUrl: opts.client.baseUrl };
-    }
-    if (
-      err instanceof ApiRequestError &&
-      (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED)
-    ) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
-    throw err;
+    return mapCommonApiError(err, opts.client);
   }
 }
 
@@ -684,16 +669,7 @@ export async function runChatLog(opts: {
 
     return { ok: true, conversation: resolved.conversation, messages, since: opts.since };
   } catch (err) {
-    if (err instanceof ServerUnreachableError) {
-      return { ok: false, reason: 'server_unreachable', serverUrl: opts.client.baseUrl };
-    }
-    if (
-      err instanceof ApiRequestError &&
-      (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED)
-    ) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
-    throw err;
+    return mapCommonApiError(err, opts.client);
   }
 }
 
@@ -826,16 +802,7 @@ export async function runChatExport(opts: {
     await writeFile(target.path, markdown, 'utf-8');
     return { ok: true, savedPath: target.path };
   } catch (err) {
-    if (err instanceof ServerUnreachableError) {
-      return { ok: false, reason: 'server_unreachable', serverUrl: opts.client.baseUrl };
-    }
-    if (
-      err instanceof ApiRequestError &&
-      (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED)
-    ) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
-    throw err;
+    return mapCommonApiError(err, opts.client);
   }
 }
 
@@ -890,16 +857,7 @@ export async function runChatSearch(opts: {
     );
     return { ok: true, items: res.data, q: opts.q };
   } catch (err) {
-    if (err instanceof ServerUnreachableError) {
-      return { ok: false, reason: 'server_unreachable', serverUrl: opts.client.baseUrl };
-    }
-    if (
-      err instanceof ApiRequestError &&
-      (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED)
-    ) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
-    throw err;
+    return mapCommonApiError(err, opts.client);
   }
 }
 

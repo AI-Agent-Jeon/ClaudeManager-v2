@@ -165,6 +165,25 @@ function toMessage(row: MessageRow): Message {
   };
 }
 
+/**
+ * SEC-05/REV-M-05 — `messageRepo.search`의 `MATCH ?`는 파라미터 바인딩이라
+ * SQL 인젝션은 없다(값이 문자열 연결로 SQL에 들어가지 않는다). 그러나
+ * 바인딩된 값 자체는 **FTS5 질의식**으로 파싱되므로, `"`·`AND`·`NEAR(`·`*`·
+ * `^`·`:` 같은 토큰이 검색어에 섞이면 SQLite가 `fts5: syntax error`를 던지고
+ * 그 예외가 어디서도 잡히지 않아 generic 500으로 나갔다(재현: `q="` 또는
+ * `q=AND`).
+ *
+ * 큰따옴표를 이스케이프(`"` → `""`)한 뒤 전체를 큰따옴표로 감싸 FTS5 문자열
+ * 리터럴로 만든다 — 구문 오류가 원천 차단된다. **검색 동작이 바뀐다**: 이제
+ * 모든 검색어가 항상 구(phrase) 검색으로 동작이 통일된다(특수문자가 없을
+ * 때는 이전과 결과가 같다 — 일반 단어는 그 자체로 유효한 FTS5 질의식이자
+ * 유효한 phrase이기 때문이다). 이 근거는 개발 지시 §7 수정 방향이 요구한
+ * 그대로다.
+ */
+function escapeFtsQuery(q: string): string {
+  return `"${q.replace(/"/g, '""')}"`;
+}
+
 function encodeCursor(row: { created_at: string; id: string }): string {
   return Buffer.from(JSON.stringify({ createdAt: row.created_at, id: row.id }), 'utf-8').toString(
     'base64',
@@ -303,14 +322,22 @@ export class ConversationService {
 
   /** FR-027 — FTS5 전문 검색. 채널이 아카이브돼도 검색은 허용된다 */
   async search(opts: SearchMessagesOpts): Promise<SearchResult[]> {
-    const rows: SearchRow[] = this.messageRepo.search({
-      q: opts.q,
-      type: opts.type,
-      status: opts.status,
-      from: opts.from,
-      to: opts.to,
-      limit: opts.limit ?? 20,
-    });
+    let rows: SearchRow[];
+    try {
+      rows = this.messageRepo.search({
+        q: escapeFtsQuery(opts.q),
+        type: opts.type,
+        status: opts.status,
+        from: opts.from,
+        to: opts.to,
+        limit: opts.limit ?? 20,
+      });
+    } catch {
+      // SEC-05/REV-M-05 — 이스케이프로 구문 오류는 원천 차단되지만, 방어적으로
+      // FTS5가 던질 수 있는 그 밖의 실패까지 generic 500 대신 400으로 변환한다.
+      // 내부 SQLite 에러 원문은 노출하지 않는다(utils/errors.ts와 같은 원칙).
+      throw new AppError(400, ErrorCode.VALIDATION_ERROR, '검색어를 처리할 수 없습니다');
+    }
 
     return rows.map((row) => ({
       messageId: row.id,

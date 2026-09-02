@@ -2,7 +2,7 @@ import type { Command } from 'commander';
 import { ErrorCode, TaskStatus } from '../../shared/constants.js';
 import { TASK_TRANSITIONS } from '../../shared/state-transitions.js';
 import type { Agent, Task } from '../../shared/types.js';
-import { ApiRequestError, ServerUnreachableError } from '../api-client.js';
+import { ApiRequestError } from '../api-client.js';
 import {
   formatFields,
   formatTimestamp,
@@ -20,6 +20,7 @@ import {
   type CommandDeps,
   checkAuth,
   defaultCommandDeps,
+  mapCommonApiError,
   notFoundBlock,
   presentAuthGuardFailure,
   resolveId,
@@ -54,19 +55,13 @@ export type TaskCreateResult =
   | { ok: false; reason: 'unauthenticated' };
 
 function mapTaskCreateError(err: unknown, client: CliApiClient, agentId: string): TaskCreateResult {
-  if (err instanceof ServerUnreachableError) {
-    return { ok: false, reason: 'server_unreachable', serverUrl: client.baseUrl };
-  }
   if (err instanceof ApiRequestError) {
     if (err.code === ErrorCode.AGENT_NOT_FOUND)
       return { ok: false, reason: 'agent_not_found', agentId };
     if (err.code === ErrorCode.VALIDATION_ERROR)
       return { ok: false, reason: 'validation', message: err.message };
-    if (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
   }
-  throw err;
+  return mapCommonApiError(err, client);
 }
 
 export async function runTaskCreate(opts: {
@@ -78,7 +73,13 @@ export async function runTaskCreate(opts: {
   // `--agent`도 §8 ID 축약 규칙 대상이다 — 접두어를 그대로 POST에 실으면
   // 백엔드가 정확히 일치하는 UUID만 찾아 항상 AGENT_NOT_FOUND가 난다
   // (runAgentCreate의 `--project`와 같은 함정).
-  const resolvedAgent = await resolveId<Agent>(opts.client, '/agents', opts.agentId, (a) => a.name);
+  // REV-H-03 — resolveId의 내부 HTTP 호출을 try로 감싼다
+  let resolvedAgent: Awaited<ReturnType<typeof resolveId<Agent>>>;
+  try {
+    resolvedAgent = await resolveId<Agent>(opts.client, '/agents', opts.agentId, (a) => a.name);
+  } catch (err) {
+    return mapCommonApiError(err, opts.client);
+  }
   if (!resolvedAgent.ok) {
     if (resolvedAgent.reason === 'not_found') {
       return { ok: false, reason: 'agent_not_found', agentId: opts.agentId };
@@ -177,11 +178,16 @@ export async function runTaskList(opts: {
   page: number;
 }): Promise<TaskListResult> {
   // --agent도 §8 ID 축약 규칙 대상이다 — runAgentList의 --project와 같은 이유
+  // REV-H-03 — resolveId의 내부 HTTP 호출을 try로 감싼다
   let agentId = opts.agentId;
   if (agentId) {
-    const resolved = await resolveId<Agent>(opts.client, '/agents', agentId, (a) => a.name);
-    if (!resolved.ok) return toIdLookupFailure(resolved, agentId);
-    agentId = resolved.id;
+    try {
+      const resolved = await resolveId<Agent>(opts.client, '/agents', agentId, (a) => a.name);
+      if (!resolved.ok) return toIdLookupFailure(resolved, agentId);
+      agentId = resolved.id;
+    } catch (err) {
+      return mapCommonApiError(err, opts.client);
+    }
   }
 
   try {
@@ -202,16 +208,7 @@ export async function runTaskList(opts: {
       agentId,
     };
   } catch (err) {
-    if (err instanceof ServerUnreachableError) {
-      return { ok: false, reason: 'server_unreachable', serverUrl: opts.client.baseUrl };
-    }
-    if (
-      err instanceof ApiRequestError &&
-      (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED)
-    ) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
-    throw err;
+    return mapCommonApiError(err, opts.client);
   }
 }
 
@@ -263,24 +260,23 @@ export async function runTaskDetail(opts: {
   client: CliApiClient;
   idOrPrefix: string;
 }): Promise<TaskDetailResult> {
-  const resolved = await resolveId<Task>(opts.client, '/tasks', opts.idOrPrefix, (t) => t.title);
+  // REV-H-03 — resolveId 호출을 try로 감싼다
+  let resolved: Awaited<ReturnType<typeof resolveId<Task>>>;
+  try {
+    resolved = await resolveId<Task>(opts.client, '/tasks', opts.idOrPrefix, (t) => t.title);
+  } catch (err) {
+    return mapCommonApiError(err, opts.client);
+  }
   if (!resolved.ok) return toIdLookupFailure(resolved, opts.idOrPrefix);
 
   try {
     const res = await opts.client.get<{ data: Task }>(`/tasks/${resolved.id}`);
     return { ok: true, task: res.data };
   } catch (err) {
-    if (err instanceof ServerUnreachableError) {
-      return { ok: false, reason: 'server_unreachable', serverUrl: opts.client.baseUrl };
+    if (err instanceof ApiRequestError && err.code === ErrorCode.TASK_NOT_FOUND) {
+      return { ok: false, reason: 'not_found', id: opts.idOrPrefix };
     }
-    if (err instanceof ApiRequestError) {
-      if (err.code === ErrorCode.TASK_NOT_FOUND)
-        return { ok: false, reason: 'not_found', id: opts.idOrPrefix };
-      if (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED) {
-        return { ok: false, reason: 'unauthenticated' };
-      }
-    }
-    throw err;
+    return mapCommonApiError(err, opts.client);
   }
 }
 
@@ -354,9 +350,6 @@ async function mapTaskStatusChangeError(
   resolvedId: string,
   agentId: string,
 ): Promise<TaskStatusChangeResult> {
-  if (err instanceof ServerUnreachableError) {
-    return { ok: false, reason: 'server_unreachable', serverUrl: client.baseUrl };
-  }
   if (err instanceof ApiRequestError) {
     if (err.code === ErrorCode.TASK_NOT_FOUND)
       return { ok: false, reason: 'not_found', id: resolvedId };
@@ -368,11 +361,8 @@ async function mapTaskStatusChangeError(
       const parent = await describeParentAgent(client, agentId);
       return { ok: false, reason: 'parent_not_active', ...parent };
     }
-    if (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
   }
-  throw err;
+  return mapCommonApiError(err, client);
 }
 
 export async function runTaskStatusChange(opts: {
@@ -380,7 +370,13 @@ export async function runTaskStatusChange(opts: {
   idOrPrefix: string;
   newStatus: string;
 }): Promise<TaskStatusChangeResult> {
-  const resolved = await resolveId<Task>(opts.client, '/tasks', opts.idOrPrefix, (t) => t.title);
+  // REV-H-03 — resolveId 호출을 try로 감싼다
+  let resolved: Awaited<ReturnType<typeof resolveId<Task>>>;
+  try {
+    resolved = await resolveId<Task>(opts.client, '/tasks', opts.idOrPrefix, (t) => t.title);
+  } catch (err) {
+    return mapCommonApiError(err, opts.client);
+  }
   if (!resolved.ok) return toIdLookupFailure(resolved, opts.idOrPrefix);
 
   // 전이 전 상태(from)와 소속 Agent ID를 함께 확보한다 — PATCH 응답은 이후

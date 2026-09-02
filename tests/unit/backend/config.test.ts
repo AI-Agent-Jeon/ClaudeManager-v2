@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { loadConfig } from '../../../src/backend/config.js';
+import { isLoopbackHost, loadConfig } from '../../../src/backend/config.js';
 
 /**
  * 정의 원본: DES-009 v3.1 §상수 · DES-001 v3.2 ADR-005
@@ -54,6 +54,40 @@ describe('loadConfig — DES-009 §상수', () => {
     process.env.CM_PORT = '70000';
     expect(() => loadConfig()).toThrow(/CM_PORT/);
   });
+
+  it(
+    'SEC-06/SEC-10 — CM_HOST가 빈 문자열이면 미설정으로 취급해 127.0.0.1로 되돌린다 ' +
+      '(??는 빈 문자열을 통과시켜 Node가 "모든 인터페이스"로 해석하는 문제)',
+    () => {
+      process.env.CM_HOST = '';
+      const c = loadConfig();
+      expect(c.host).toBe('127.0.0.1');
+    },
+  );
+
+  it('REV-L-02 — CM_DB_PATH가 빈 문자열이면 미설정으로 취급해 기본 경로로 되돌린다', () => {
+    process.env.CM_DB_PATH = '';
+    const c = loadConfig();
+    expect(c.dbPath).toBe('./data/claude-manager.db');
+  });
+
+  it('버전은 process.env가 아니라 주입받은 env를 쓴다 (SEC-06 증상 5-c)', () => {
+    const c = loadConfig({ npm_package_version: '9.9.9' });
+    expect(c.version).toBe('9.9.9');
+  });
+});
+
+describe('isLoopbackHost — Phase 1 접속 경계(DES-001) 경고 판정', () => {
+  it('127.0.0.1·localhost·::1은 루프백이다', () => {
+    expect(isLoopbackHost('127.0.0.1')).toBe(true);
+    expect(isLoopbackHost('localhost')).toBe(true);
+    expect(isLoopbackHost('::1')).toBe(true);
+  });
+
+  it('0.0.0.0이나 그 외 호스트는 루프백이 아니다', () => {
+    expect(isLoopbackHost('0.0.0.0')).toBe(false);
+    expect(isLoopbackHost('192.168.0.10')).toBe(false);
+  });
 });
 
 describe('인증 시크릿 — ADR-005', () => {
@@ -74,4 +108,16 @@ describe('인증 시크릿 — ADR-005', () => {
     expect(c.authSecret).toBe('my-secret');
     expect(c.authSecretGenerated).toBe(false);
   });
+
+  it(
+    'SEC-06 증상 5-b — CM_AUTH_SECRET이 빈 문자열이면 미설정으로 취급해 랜덤 생성한다 ' +
+      '(authSecretGenerated=true인데 authSecret이 빈 값으로 남는 불일치를 막는다)',
+    () => {
+      process.env.CM_AUTH_SECRET = '';
+      const c = loadConfig();
+      expect(c.authSecretGenerated).toBe(true);
+      expect(c.authSecret).toHaveLength(64);
+      expect(c.authSecret).not.toBe('');
+    },
+  );
 });

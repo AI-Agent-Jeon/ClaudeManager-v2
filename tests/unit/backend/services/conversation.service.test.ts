@@ -210,6 +210,32 @@ describe('search — FR-027 FTS5', () => {
     expect(results[0]?.conversationTitle).toBe('Main');
     expect(results[0]?.snippet).toContain('<mark>');
   });
+
+  describe('SEC-05/REV-M-05 — FTS5 특수문자가 섞여도 구문 오류(500)가 아니다', () => {
+    // 이스케이프 전에는 이 값들이 그대로 MATCH에 바인딩되면
+    // `fts5: syntax error near ...`를 던졌다(재현: GET /conversations/search?q=%22
+    // 또는 q=AND). 이제는 큰따옴표로 감싼 phrase 리터럴로 변환돼 구문 오류가
+    // 나지 않는다 — 결과가 없어도(0건) 예외 없이 빈 배열이어야 한다.
+    it.each([
+      ['큰따옴표 하나', '"'],
+      ['불리언 연산자 AND', 'AND'],
+      ['접두어 연산자 *', '설계*'],
+      ['NEAR 연산자', 'NEAR(a b)'],
+    ])('%s(%s)는 예외 없이 처리된다', async (_label, q) => {
+      const convId = seedMainChannel(testDb.db);
+      seedMessage(testDb.db, convId, { body: '관련 없는 본문' });
+
+      await expect(service.search({ q })).resolves.toBeInstanceOf(Array);
+    });
+
+    it('큰따옴표가 포함된 검색어도 이스케이프되어 해당 문구를 담은 메시지를 찾는다', async () => {
+      const convId = seedMainChannel(testDb.db);
+      seedMessage(testDb.db, convId, { body: '설계 문서에 "승인 대기" 상태를 명시했다' });
+
+      const results = await service.search({ q: '"승인 대기"' });
+      expect(results).toHaveLength(1);
+    });
+  });
 });
 
 describe('exportMarkdown — FR-027', () => {

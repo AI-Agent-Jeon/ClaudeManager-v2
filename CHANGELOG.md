@@ -299,6 +299,48 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   `INVALID_TRANSITION`이 난다. 직전 단계 상태가 `in_progress`일 때만 "complete"를, `pending`이면
   "start"를 권하도록 교정 — 실제 백엔드를 띄워 게이트 3단 가드를 손으로 재현하는 과정(개발 지시 §8
   항목 5)에서 발견했다
+- **REV-H-02/SEC-09 — 승인이 커밋된 뒤 요청자 Agent 상태 전이 실패가 응답을 422로 깨던 문제** —
+  `ApprovalService.transitionRequesterStatus()`는 `request()`/`resolve()`의 트랜잭션이 **커밋된 뒤**
+  `agentService.updateStatus()`를 부르는데, 내부 `validateTransition`이 실패하면 422를 던져 승인
+  행은 이미 확정됐는데 응답만 실패하고 재시도는 409 `APPROVAL_ALREADY_RESOLVED`로 막다른 길이 됐다
+  (예: 프로젝트 `cancelled` 캐스케이드로 요청자 Agent가 이미 `cancelled`인 채 뒤늦게 승인이 처리되는
+  경로). `validateTransition`을 먼저 검사해 전이가 불가하면 예외를 던지지 않고 경고 로그만 남긴 채
+  건너뛰도록 교정 — DEV-D-06("요청자 Agent 행이 없으면 조용히 건너뛴다")을 "행은 있지만 현재 상태에서
+  전이가 불가한 경우"까지 넓혔다
+- **REV-H-03 — CLI `resolveId()`가 try 밖에 있어 공통 에러 안내가 우회되던 문제** — `resolveId`는
+  내부에서 실제 HTTP로 목록을 훑는데, 이 호출이 try 블록 밖에 있으면 서버가 죽었거나 토큰이 만료됐을 때
+  `ServerUnreachableError`/`ApiRequestError`가 각 명령의 판별 유니온을 거치지 못하고 `index.ts`의 범용
+  "예기치 못한 오류" 처리로 떨어졌다(DES-006 §8 공통 에러 계약이 대부분의 ID-접두어 명령에서 실제로는
+  작동하지 않는 상태였다). `runtime.ts`에 `mapCommonApiError()` 헬퍼를 추가하고 `agent.ts`·`task.ts`·
+  `project.ts`의 `resolveId` 호출 10곳 전건을 try로 감쌌다. 같은 "unreachable + 401" catch 블록이
+  CLI 12곳 이상에 복붙돼 있던 것도(REV-L-07) 이 헬퍼로 정리했다(`approval.ts`의 `mapListError`도 위임)
+- **REV-H-04 — `cm chat agent`의 메시지 조회가 미보호였던 문제** — `runChatAgentOpen`이 Agent 조회
+  성공 후 메시지 조회(`fetchAllMessagesChronological`/`fetchRecentMessages`)를 try 없이 호출해, 그
+  사이 서버가 끊기면 선언된 `server_unreachable` 분기 대신 generic 에러로 나갔다. 같은 파일의
+  `runChatMainOpen`과 같은 형태로 try로 감쌌다
+- **SEC-04 — 마스킹 프롬프트가 stdout 리다이렉트 시 무력화되던 문제** — `createInterface`의 `terminal`
+  기본값은 `output.isTTY`다. stdout만 리다이렉트해도(`cm auth login > login.log`) `terminal:false`가
+  되어 `_writeToOutput` 재정의가 호출되지 않고 tty 기본 에코가 살아나 입력한 시크릿이 평문으로
+  표시됐다. 가드를 `stdin.isTTY && stdout.isTTY`로 강화하고 `terminal: true`를 명시했다
+- **SEC-06/SEC-10/REV-L-02 — `CM_HOST=''`이면 전 인터페이스에 바인딩되던 문제** — `env.CM_HOST ?? DEFAULT_HOST`는
+  `??`가 `null`/`undefined`에만 반응해 빈 문자열을 그대로 통과시켰다. `app.listen({ host: '' })`는
+  Node가 "모든 인터페이스"로 해석해 DES-001 §접속 경계("Phase 1 = 127.0.0.1 전용")를 깼다. `readPort`와
+  같은 방식으로 `host`·`dbPath`도 빈 문자열을 미설정으로 되돌리도록 교정했다. `CM_AUTH_SECRET=''`일 때
+  `authSecretGenerated`(true)와 실제 `authSecret`(빈 문자열)이 어긋나 "시크릿을 생성했습니다" 배너 뒤
+  빈 시크릿으로 JWT 등록이 실패하던 것도 `||`로 통일해 교정했다. `version`이 주입받은 `env`가 아니라
+  전역 `process.env`를 보던 것도 교정. Phase 1에서 루프백이 아닌 host가 지정되면(거부는 하지 않고)
+  기동 배너에서 경고하도록 `server.ts`에 `isLoopbackHost()` 판정을 추가했다
+- **SEC-07/REV-M-04 — Fastify 자체 에러가 원 statusCode를 잃고 전부 500이 되던 문제** — 파손된 JSON
+  본문(`FST_ERR_CTP_INVALID_JSON_BODY`, 400)·본문 크기 초과(413)·미디어 타입 불일치(415) 같은 Fastify
+  자체 오류는 `AppError`도 아니고 `.validation`도 없어 에러 핸들러의 무조건 500 분기로 떨어졌다.
+  `err.statusCode`가 4xx면 그 값과 `VALIDATION_ERROR`를 쓰도록 분기를 추가하고, 클라이언트 요청
+  문제이므로 `log.error` 대신 `log.warn`으로 낮췄다. 에러 원문·스택·내부 경로는 계속 노출하지 않는다
+- **SEC-05/REV-M-05 — FTS5 `MATCH` 입력 무검증으로 특수문자 검색이 500이 되던 문제** — `MATCH ?`는
+  파라미터 바인딩이라 SQL 인젝션은 없지만, 바인딩된 값 자체가 FTS5 질의식으로 파싱돼 `"`·`AND`·
+  `NEAR(`·`*`·`^`·`:` 같은 토큰이 섞이면 `fts5: syntax error`가 어디서도 잡히지 않고 500으로 나갔다.
+  `ConversationService.search()`에서 검색어를 FTS5 문자열 리터럴로 이스케이프(`"` → `""` 후 전체를
+  `"..."`로 감싼다)해 구문 오류를 원천 차단했다 — 검색 동작이 구(phrase) 검색으로 통일되므로 근거를
+  소스 주석에 남겼다. `messageRepo.search` 호출도 방어적으로 try/catch해 400 `VALIDATION_ERROR`로 변환한다
 
 ### Security
 

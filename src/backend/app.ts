@@ -77,7 +77,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
 
     // Fastify JSON Schema 검증 실패
-    const fastifyErr = err as { validation?: unknown; message?: string };
+    const fastifyErr = err as { validation?: unknown; message?: string; statusCode?: number };
     if (fastifyErr.validation) {
       const body = toErrorResponse(
         new AppError(
@@ -87,6 +87,32 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         ),
       );
       return reply.code(400).send(body);
+    }
+
+    // SEC-07/REV-M-04 — Fastify가 라우트 핸들러에 닿기 전에 자체적으로 던지는
+    // 오류(파손 JSON 본문 FST_ERR_CTP_* 400, 본문 크기 초과 413, 미디어 타입
+    // 불일치 415 등)는 AppError도 아니고 `.validation`도 없어 이전에는
+    // 무조건 아래 500 분기로 떨어졌다(46행 주석 "잘못된 JSON은 라우트에
+    // 닿기 전에 400으로 떨어진다"와 실제 동작이 어긋났던 지점). `statusCode`가
+    // 4xx면 그 값을 존중한다 — 에러 원문·스택·내부 경로는 여전히 노출하지
+    // 않는다. Fastify가 내려주는 이 메시지들은 "Body cannot be empty..." 같은
+    // 표준 안내문이라 위 검증 실패 분기와 같은 방식으로 그대로 전달해도 된다.
+    if (
+      typeof fastifyErr.statusCode === 'number' &&
+      fastifyErr.statusCode >= 400 &&
+      fastifyErr.statusCode < 500
+    ) {
+      // 클라이언트 요청 문제이지 서버 결함이 아니다 — error가 아니라 warn으로
+      // 남겨 로그를 오염시키지 않는다.
+      request.log.warn({ err }, 'client error');
+      const body = toErrorResponse(
+        new AppError(
+          fastifyErr.statusCode,
+          ErrorCode.VALIDATION_ERROR,
+          fastifyErr.message ?? '요청이 올바르지 않습니다',
+        ),
+      );
+      return reply.code(body.statusCode).send(body);
     }
 
     request.log.error({ err }, 'unhandled error');

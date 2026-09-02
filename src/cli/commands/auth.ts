@@ -167,14 +167,22 @@ export async function runStatus(opts: RunStatusOpts): Promise<StatusResult> {
  * 방법을 쓴다. 비대화형(파이프·CI) 환경에서는 마스킹이 의미가 없고 사용자가
  * 개입할 수도 없으므로 즉시 중단한다 — PRM-01은 `--force`로 생략 불가하다
  * (DES-006 §5 공통 규칙 3).
+ *
+ * SEC-04 — `createInterface`의 `terminal` 기본값은 `output.isTTY`다. **stdout만**
+ * 리다이렉트해도(`cm auth login > login.log`) `terminal:false`가 되어
+ * `_writeToOutput` 재정의가 아예 호출되지 않고, tty 드라이버의 기본 에코가
+ * 살아나 입력한 시크릿이 터미널에 평문으로 표시된다. 가드를
+ * `stdin.isTTY && stdout.isTTY` 둘 다로 강화하고, `terminal: true`를 명시해
+ * 이중으로 막는다 — 마스킹은 stdin·stdout 둘 다 실제 터미널일 때만 의미가
+ * 있다.
  */
 export function defaultPromptSecret(question: string): Promise<string> {
-  if (!process.stdin.isTTY) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
     return Promise.reject(new Error('NOT_TTY'));
   }
 
   return new Promise((resolve, reject) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
     let promptWritten = false;
     // biome-ignore lint/suspicious/noExplicitAny: readline 내부 비공개 API — 마스킹 목적
     (rl as any)._writeToOutput = (str: string) => {

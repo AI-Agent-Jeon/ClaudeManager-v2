@@ -2,7 +2,7 @@ import type { Command } from 'commander';
 import { ErrorCode, ProjectStatus } from '../../shared/constants.js';
 import { PROJECT_TRANSITIONS } from '../../shared/state-transitions.js';
 import type { Agent, Project, ProjectDetail } from '../../shared/types.js';
-import { ApiRequestError, ServerUnreachableError } from '../api-client.js';
+import { ApiRequestError } from '../api-client.js';
 import {
   formatFields,
   formatTimestamp,
@@ -23,6 +23,7 @@ import {
   checkAuth,
   defaultCommandDeps,
   diffCascade,
+  mapCommonApiError,
   notFoundBlock,
   presentAuthGuardFailure,
   resolveId,
@@ -67,9 +68,6 @@ export async function runProjectCreate(opts: {
     });
     return { ok: true, project: res.data };
   } catch (err) {
-    if (err instanceof ServerUnreachableError) {
-      return { ok: false, reason: 'server_unreachable', serverUrl: opts.client.baseUrl };
-    }
     if (err instanceof ApiRequestError) {
       if (err.code === ErrorCode.PROJECT_NAME_CONFLICT) {
         return { ok: false, reason: 'name_conflict', name: opts.name };
@@ -77,11 +75,8 @@ export async function runProjectCreate(opts: {
       if (err.code === ErrorCode.VALIDATION_ERROR) {
         return { ok: false, reason: 'validation', message: err.message };
       }
-      if (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED) {
-        return { ok: false, reason: 'unauthenticated' };
-      }
     }
-    throw err;
+    return mapCommonApiError(err, opts.client);
   }
 }
 
@@ -151,16 +146,7 @@ export async function runProjectList(opts: {
       status: opts.status,
     };
   } catch (err) {
-    if (err instanceof ServerUnreachableError) {
-      return { ok: false, reason: 'server_unreachable', serverUrl: opts.client.baseUrl };
-    }
-    if (
-      err instanceof ApiRequestError &&
-      (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED)
-    ) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
-    throw err;
+    return mapCommonApiError(err, opts.client);
   }
 }
 
@@ -216,30 +202,23 @@ export async function runProjectDetail(opts: {
   client: CliApiClient;
   idOrPrefix: string;
 }): Promise<ProjectDetailResult> {
-  const resolved = await resolveId<Project>(
-    opts.client,
-    '/projects',
-    opts.idOrPrefix,
-    (p) => p.name,
-  );
+  // REV-H-03 — resolveId 호출을 try로 감싼다
+  let resolved: Awaited<ReturnType<typeof resolveId<Project>>>;
+  try {
+    resolved = await resolveId<Project>(opts.client, '/projects', opts.idOrPrefix, (p) => p.name);
+  } catch (err) {
+    return mapCommonApiError(err, opts.client);
+  }
   if (!resolved.ok) return toIdLookupFailure(resolved, opts.idOrPrefix);
 
   try {
     const res = await opts.client.get<{ data: ProjectDetail }>(`/projects/${resolved.id}`);
     return { ok: true, project: res.data };
   } catch (err) {
-    if (err instanceof ServerUnreachableError) {
-      return { ok: false, reason: 'server_unreachable', serverUrl: opts.client.baseUrl };
+    if (err instanceof ApiRequestError && err.code === ErrorCode.PROJECT_NOT_FOUND) {
+      return { ok: false, reason: 'not_found', id: opts.idOrPrefix };
     }
-    if (err instanceof ApiRequestError) {
-      if (err.code === ErrorCode.PROJECT_NOT_FOUND) {
-        return { ok: false, reason: 'not_found', id: opts.idOrPrefix };
-      }
-      if (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED) {
-        return { ok: false, reason: 'unauthenticated' };
-      }
-    }
-    throw err;
+    return mapCommonApiError(err, opts.client);
   }
 }
 
@@ -333,9 +312,6 @@ function mapProjectStatusChangeError(
   client: CliApiClient,
   idOrPrefix: string,
 ): ProjectStatusChangeResult {
-  if (err instanceof ServerUnreachableError) {
-    return { ok: false, reason: 'server_unreachable', serverUrl: client.baseUrl };
-  }
   if (err instanceof ApiRequestError) {
     if (err.code === ErrorCode.PROJECT_NOT_FOUND) {
       return { ok: false, reason: 'not_found', id: idOrPrefix };
@@ -344,11 +320,8 @@ function mapProjectStatusChangeError(
       const allowed = (err.details?.allowedTransitions as string[] | undefined) ?? [];
       return { ok: false, reason: 'invalid_transition', message: err.message, allowed };
     }
-    if (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
   }
-  throw err;
+  return mapCommonApiError(err, client);
 }
 
 export async function runProjectStatusChange(opts: {
@@ -356,12 +329,13 @@ export async function runProjectStatusChange(opts: {
   idOrPrefix: string;
   newStatus: string;
 }): Promise<ProjectStatusChangeResult> {
-  const resolved = await resolveId<Project>(
-    opts.client,
-    '/projects',
-    opts.idOrPrefix,
-    (p) => p.name,
-  );
+  // REV-H-03 — resolveId 호출을 try로 감싼다
+  let resolved: Awaited<ReturnType<typeof resolveId<Project>>>;
+  try {
+    resolved = await resolveId<Project>(opts.client, '/projects', opts.idOrPrefix, (p) => p.name);
+  } catch (err) {
+    return mapCommonApiError(err, opts.client);
+  }
   if (!resolved.ok) return toIdLookupFailure(resolved, opts.idOrPrefix);
 
   // "이전상태 → 이후상태"(SCR-P04)를 보여주려면 전이 전 상태가 필요하다 —

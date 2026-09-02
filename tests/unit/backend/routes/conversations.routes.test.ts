@@ -314,6 +314,25 @@ describe('GET /api/conversations/search — FR-027 FTS5', () => {
     });
     expect(res.statusCode).toBe(400);
   });
+
+  describe('SEC-05/REV-M-05 — FTS5 특수문자가 섞인 검색어는 500이 아니다', () => {
+    // 재현: GET /api/conversations/search?q=AND (불리언 연산자) 또는
+    // q=%22%22(따옴표) → 이전에는 `fts5: syntax error`가 잡히지 않아 500이었다.
+    it.each([
+      ['불리언 연산자 AND', 'AND'],
+      ['따옴표 두 개', '""'],
+      ['NEAR 연산자', 'NEAR(a b)'],
+    ])('q=%s는 200으로 응답한다 (결과는 0건이어도 무방하다)', async (_label, q) => {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/conversations/search?q=${encodeURIComponent(q)}`,
+        headers: authHeader(),
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(Array.isArray(res.json().data)).toBe(true);
+    });
+  });
 });
 
 describe('GET /api/conversations/:id/export — FR-027', () => {

@@ -141,6 +141,24 @@ describe('runProjectDetail', () => {
     expect(result).toEqual({ ok: false, reason: 'not_found', id: PROJECT_A.id });
   });
 
+  it(
+    'REV-H-03 — ID 접두어 해석(resolveId) 중 서버가 끊기면 uncaught로 전파되지 않고 ' +
+      'server_unreachable로 매핑된다',
+    async () => {
+      const client = fakeClient({
+        get: vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000/api')),
+      });
+
+      const result = await runProjectDetail({ client, idOrPrefix: PROJECT_A.id.slice(0, 8) });
+
+      expect(result).toEqual({
+        ok: false,
+        reason: 'server_unreachable',
+        serverUrl: 'http://127.0.0.1:3000/api',
+      });
+    },
+  );
+
   it('8자 접두어가 여러 건과 겹치면 ambiguous', async () => {
     const client = fakeClient({
       get: vi.fn().mockResolvedValue({

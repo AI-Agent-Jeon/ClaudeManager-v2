@@ -1,6 +1,7 @@
 import { SHUTDOWN_TIMEOUT_MS } from '../shared/constants.js';
 import { buildApp } from './app.js';
 import { buildBootstrapService } from './bootstrap/bootstrap.service.js';
+import { isLoopbackHost } from './config.js';
 import { ApprovalTimeoutJob } from './jobs/approval-timeout.job.js';
 import { buildApprovalService } from './routes/approvals.routes.js';
 
@@ -15,6 +16,20 @@ import { buildApprovalService } from './routes/approvals.routes.js';
 async function main(): Promise<void> {
   const app = await buildApp({ logger: true });
   const { host, port, authSecretGenerated, authSecret } = app.config;
+
+  // SEC-06 — Phase 1은 DES-001 §접속 경계상 루프백 전용이다("외부 노출
+  // 없음"이 RISK-010 인증 보안 완화의 전제). 거부하지는 않는다 — 대표가
+  // 의도적으로 CM_HOST를 바꿀 수 있다(개발 지시 §5-a) — 눈에 띄게 경고만 한다.
+  if (!isLoopbackHost(host)) {
+    console.info(
+      [
+        '',
+        `  ⚠ CM_HOST가 루프백이 아닙니다 (현재: ${host}). Phase 1은 외부 노출을`,
+        '     상정하지 않습니다 — 의도한 설정이 맞는지 확인하세요.',
+        '',
+      ].join('\n'),
+    );
+  }
 
   if (authSecretGenerated) {
     // ADR-005: 시크릿 미설정 시 랜덤 생성 후 콘솔 출력.

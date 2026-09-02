@@ -217,6 +217,27 @@ describe('runAgentDetail', () => {
 
     expect(result).toEqual({ ok: false, reason: 'not_found', id: AGENT_A.id });
   });
+
+  it(
+    'REV-H-03 — ID 접두어 해석(resolveId) 중 서버가 끊기면 uncaught로 전파되지 않고 ' +
+      'server_unreachable로 매핑된다',
+    async () => {
+      // 8자 접두어를 주면 resolveId가 목록 조회(client.get)를 실제로 수행한다
+      // (전체 UUID는 조회 없이 통과한다 — runtime.ts FULL_ID_LEN). 이 조회가
+      // try 밖에 있으면 여기서 던진 에러가 어디에도 잡히지 않았다.
+      const client = fakeClient({
+        get: vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000/api')),
+      });
+
+      const result = await runAgentDetail({ client, idOrPrefix: AGENT_A.id.slice(0, 8) });
+
+      expect(result).toEqual({
+        ok: false,
+        reason: 'server_unreachable',
+        serverUrl: 'http://127.0.0.1:3000/api',
+      });
+    },
+  );
 });
 
 describe('runAgentStatusChange', () => {

@@ -126,6 +126,46 @@ describe('에러 응답 형식 — DES-009 §HTTP 에러 응답', () => {
   });
 });
 
+describe('SEC-07/REV-M-04 — Fastify 자체 에러도 무조건 500이 아니라 원래 statusCode를 쓴다', () => {
+  async function authHeader(): Promise<{ authorization: string }> {
+    const token = (await login()).json().data.token;
+    return { authorization: `Bearer ${token}` };
+  }
+
+  it('파손된 JSON 본문은 500이 아니라 400 VALIDATION_ERROR다', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: { ...(await authHeader()), 'content-type': 'application/json' },
+      payload: '{',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('VALIDATION_ERROR');
+  });
+
+  it('본문 크기 초과는 500이 아니라 413이다', async () => {
+    // 기본 bodyLimit(1MiB)을 넘긴다 — 별도 설정을 하지 않았으므로 Fastify 기본값이다
+    const oversized = 'a'.repeat(2 * 1024 * 1024);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: { ...(await authHeader()), 'content-type': 'application/json' },
+      payload: JSON.stringify({ name: oversized }),
+    });
+    expect(res.statusCode).toBe(413);
+  });
+
+  it('지원하지 않는 미디어 타입은 500이 아니라 415다', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: { ...(await authHeader()), 'content-type': 'application/xml' },
+      payload: '<project/>',
+    });
+    expect(res.statusCode).toBe(415);
+  });
+});
+
 describe('부팅 — DAT-001 · DAT-002', () => {
   it('Given DB 파일이 없을 때 When 서버를 시작하면 Then 스키마가 적용된다', () => {
     const tables = app.db

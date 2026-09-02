@@ -34,6 +34,7 @@ import type { ConversationRepository } from '../repositories/conversation.reposi
 import type { MessageRepository } from '../repositories/message.repository.js';
 import type { StatusChangeRepository } from '../repositories/status-change.repository.js';
 import { AppError } from '../utils/errors.js';
+import { validateTransition } from '../utils/state-machine.js';
 import type { WebSocketHub } from '../ws/hub.js';
 import type { AgentService } from './agent.service.js';
 // 파생 로직(deriveSyncStatus)만 가져온다 — ArtifactService 인스턴스를 주입받지
@@ -508,6 +509,17 @@ export class ApprovalService {
   /**
    * DEV-D-06 — `requested_by`는 자유 문자열이다(`'main'` 등 Agent 행이 없는
    * 요청자가 있다). Agent로 존재하면 상태를 전이하고, 없으면 조용히 건너뛴다.
+   *
+   * REV-H-02/SEC-09 — 이 호출은 항상 `request()`/`resolve()`의 트랜잭션이
+   * **커밋된 뒤**에 일어난다(클래스 상단 의존 설계 메모 4번). 커밋 후 부수효과가
+   * 예외를 던지면 승인(approvals) 행은 이미 확정됐는데 응답만 422로 실패하고,
+   * 재시도는 409 APPROVAL_ALREADY_RESOLVED로 막다른 길이 된다(예: 프로젝트
+   * cancelled 캐스케이드로 요청자 Agent가 이미 `cancelled`인 채 승인이 뒤늦게
+   * 처리되는 경로). 그래서 `agentService.updateStatus`(내부에서 422를 던질 수
+   * 있다)를 그대로 부르지 않고, `validateTransition`으로 **먼저** 검사한다.
+   * 전이가 불가하면 예외를 전파하지 않고 경고만 남긴 채 건너뛴다 — DEV-D-06이
+   * 세운 "요청자 Agent 행이 없으면 조용히 건너뛴다" 선례를 "행은 있지만 현재
+   * 상태에서 전이가 불가한 경우"까지 넓힌 것이다.
    */
   private async transitionRequesterStatus(
     requestedBy: string,
@@ -516,6 +528,13 @@ export class ApprovalService {
   ): Promise<void> {
     const exists = this.agentRepo.findById(requestedBy);
     if (!exists) return;
+    if (!validateTransition('agent', exists.status, newStatus)) {
+      console.warn(
+        `[approval.service] 요청자 Agent 상태 전이를 건너뜁니다 (허용되지 않는 전이): ` +
+          `${requestedBy} ${exists.status} → ${newStatus}`,
+      );
+      return;
+    }
     await this.agentService.updateStatus(requestedBy, newStatus, waitingReason);
   }
 

@@ -24,6 +24,7 @@ import {
   defaultCommandDeps,
   defaultPromptConfirm,
   diffCascade,
+  mapCommonApiError,
   notFoundBlock,
   presentAuthGuardFailure,
   resolveId,
@@ -77,9 +78,6 @@ function mapAgentCreateError(
   projectId: string,
   name: string,
 ): AgentCreateResult {
-  if (err instanceof ServerUnreachableError) {
-    return { ok: false, reason: 'server_unreachable', serverUrl: client.baseUrl };
-  }
   if (err instanceof ApiRequestError) {
     if (err.code === ErrorCode.PROJECT_NOT_FOUND)
       return { ok: false, reason: 'project_not_found', projectId };
@@ -87,11 +85,8 @@ function mapAgentCreateError(
       return { ok: false, reason: 'name_conflict', name };
     if (err.code === ErrorCode.VALIDATION_ERROR)
       return { ok: false, reason: 'validation', message: err.message };
-    if (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
   }
-  throw err;
+  return mapCommonApiError(err, client);
 }
 
 export async function runAgentCreate(opts: {
@@ -105,12 +100,19 @@ export async function runAgentCreate(opts: {
   // 대상이다 — `project list`가 8자만 보여주므로 대표가 그걸 그대로
   // 복사해 넣는다. 접두어를 그대로 POST에 실으면 백엔드가 정확히 일치하는
   // UUID만 찾아 항상 PROJECT_NOT_FOUND가 난다.
-  const resolvedProject = await resolveId<Project>(
-    opts.client,
-    '/projects',
-    opts.projectId,
-    (p) => p.name,
-  );
+  // REV-H-03 — `resolveId`는 내부에서 실제 HTTP 요청을 보낸다. try 밖에 두면
+  // 서버 unreachable·토큰 만료가 §8 공통 에러 안내를 우회한다.
+  let resolvedProject: Awaited<ReturnType<typeof resolveId<Project>>>;
+  try {
+    resolvedProject = await resolveId<Project>(
+      opts.client,
+      '/projects',
+      opts.projectId,
+      (p) => p.name,
+    );
+  } catch (err) {
+    return mapCommonApiError(err, opts.client);
+  }
   if (!resolvedProject.ok) {
     if (resolvedProject.reason === 'not_found') {
       return { ok: false, reason: 'project_not_found', projectId: opts.projectId };
@@ -219,9 +221,15 @@ export async function runAgentList(opts: {
   // 같은 함정). 필터가 있을 때만 해석한다.
   let projectId = opts.projectId;
   if (projectId) {
-    const resolved = await resolveId<Project>(opts.client, '/projects', projectId, (p) => p.name);
-    if (!resolved.ok) return toIdLookupFailure(resolved, projectId);
-    projectId = resolved.id;
+    // REV-H-03 — resolveId의 내부 HTTP 호출을 try로 감싼다 (agent.ts 파일
+    // 헤더의 원칙 참조: 이 함수의 최종 조회와 같은 매핑을 공유한다).
+    try {
+      const resolved = await resolveId<Project>(opts.client, '/projects', projectId, (p) => p.name);
+      if (!resolved.ok) return toIdLookupFailure(resolved, projectId);
+      projectId = resolved.id;
+    } catch (err) {
+      return mapCommonApiError(err, opts.client);
+    }
   }
 
   try {
@@ -242,16 +250,7 @@ export async function runAgentList(opts: {
       projectId,
     };
   } catch (err) {
-    if (err instanceof ServerUnreachableError) {
-      return { ok: false, reason: 'server_unreachable', serverUrl: opts.client.baseUrl };
-    }
-    if (
-      err instanceof ApiRequestError &&
-      (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED)
-    ) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
-    throw err;
+    return mapCommonApiError(err, opts.client);
   }
 }
 
@@ -309,24 +308,23 @@ export async function runAgentDetail(opts: {
   client: CliApiClient;
   idOrPrefix: string;
 }): Promise<AgentDetailResult> {
-  const resolved = await resolveId<Agent>(opts.client, '/agents', opts.idOrPrefix, (a) => a.name);
+  // REV-H-03 — resolveId 호출을 try로 감싼다 (파일 헤더 원칙 참조)
+  let resolved: Awaited<ReturnType<typeof resolveId<Agent>>>;
+  try {
+    resolved = await resolveId<Agent>(opts.client, '/agents', opts.idOrPrefix, (a) => a.name);
+  } catch (err) {
+    return mapCommonApiError(err, opts.client);
+  }
   if (!resolved.ok) return toIdLookupFailure(resolved, opts.idOrPrefix);
 
   try {
     const res = await opts.client.get<{ data: AgentDetail }>(`/agents/${resolved.id}`);
     return { ok: true, agent: res.data };
   } catch (err) {
-    if (err instanceof ServerUnreachableError) {
-      return { ok: false, reason: 'server_unreachable', serverUrl: opts.client.baseUrl };
+    if (err instanceof ApiRequestError && err.code === ErrorCode.AGENT_NOT_FOUND) {
+      return { ok: false, reason: 'not_found', id: opts.idOrPrefix };
     }
-    if (err instanceof ApiRequestError) {
-      if (err.code === ErrorCode.AGENT_NOT_FOUND)
-        return { ok: false, reason: 'not_found', id: opts.idOrPrefix };
-      if (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED) {
-        return { ok: false, reason: 'unauthenticated' };
-      }
-    }
-    throw err;
+    return mapCommonApiError(err, opts.client);
   }
 }
 
@@ -436,9 +434,6 @@ async function mapAgentStatusChangeError(
   resolvedId: string,
   projectId: string,
 ): Promise<AgentStatusChangeResult> {
-  if (err instanceof ServerUnreachableError) {
-    return { ok: false, reason: 'server_unreachable', serverUrl: client.baseUrl };
-  }
   if (err instanceof ApiRequestError) {
     if (err.code === ErrorCode.AGENT_NOT_FOUND)
       return { ok: false, reason: 'not_found', id: resolvedId };
@@ -450,11 +445,8 @@ async function mapAgentStatusChangeError(
       const parent = await describeParentProject(client, projectId);
       return { ok: false, reason: 'parent_not_active', ...parent };
     }
-    if (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
   }
-  throw err;
+  return mapCommonApiError(err, client);
 }
 
 export async function runAgentStatusChange(opts: {
@@ -462,7 +454,13 @@ export async function runAgentStatusChange(opts: {
   idOrPrefix: string;
   newStatus: string;
 }): Promise<AgentStatusChangeResult> {
-  const resolved = await resolveId<Agent>(opts.client, '/agents', opts.idOrPrefix, (a) => a.name);
+  // REV-H-03 — resolveId 호출을 try로 감싼다 (파일 헤더 원칙 참조)
+  let resolved: Awaited<ReturnType<typeof resolveId<Agent>>>;
+  try {
+    resolved = await resolveId<Agent>(opts.client, '/agents', opts.idOrPrefix, (a) => a.name);
+  } catch (err) {
+    return mapCommonApiError(err, opts.client);
+  }
   if (!resolved.ok) return toIdLookupFailure(resolved, opts.idOrPrefix);
 
   // "이전상태 → 이후상태"(SCR-AG04)를 보여주려면 전이 전 상태가 필요하다 —
@@ -594,17 +592,10 @@ function mapAgentDeleteError(
   client: CliApiClient,
   idOrPrefix: string,
 ): AgentDeleteResult {
-  if (err instanceof ServerUnreachableError) {
-    return { ok: false, reason: 'server_unreachable', serverUrl: client.baseUrl };
+  if (err instanceof ApiRequestError && err.code === ErrorCode.AGENT_NOT_FOUND) {
+    return { ok: false, reason: 'not_found', id: idOrPrefix };
   }
-  if (err instanceof ApiRequestError) {
-    if (err.code === ErrorCode.AGENT_NOT_FOUND)
-      return { ok: false, reason: 'not_found', id: idOrPrefix };
-    if (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
-  }
-  throw err;
+  return mapCommonApiError(err, client);
 }
 
 export async function runAgentDelete(opts: {
@@ -613,7 +604,13 @@ export async function runAgentDelete(opts: {
   force: boolean;
   promptConfirm: (q: string) => Promise<string>;
 }): Promise<AgentDeleteResult> {
-  const resolved = await resolveId<Agent>(opts.client, '/agents', opts.idOrPrefix, (a) => a.name);
+  // REV-H-03 — resolveId 호출을 try로 감싼다 (파일 헤더 원칙 참조)
+  let resolved: Awaited<ReturnType<typeof resolveId<Agent>>>;
+  try {
+    resolved = await resolveId<Agent>(opts.client, '/agents', opts.idOrPrefix, (a) => a.name);
+  } catch (err) {
+    return mapCommonApiError(err, opts.client);
+  }
   if (!resolved.ok) return toIdLookupFailure(resolved, opts.idOrPrefix);
 
   const fetched = await fetchAgentDetailForDelete(opts.client, resolved.id, opts.idOrPrefix);

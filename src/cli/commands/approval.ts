@@ -7,7 +7,7 @@ import {
   SyncStatus,
 } from '../../shared/constants.js';
 import type { ApprovalDetail, ApprovalSummary, PhaseCurrent } from '../../shared/types.js';
-import { ApiRequestError, ServerUnreachableError } from '../api-client.js';
+import { ApiRequestError } from '../api-client.js';
 import {
   formatFields,
   formatTimestamp,
@@ -25,6 +25,7 @@ import {
   type CommandDeps,
   checkAuth,
   defaultCommandDeps,
+  mapCommonApiError,
   notFoundBlock,
   presentAuthGuardFailure,
   serverUnreachableBlock,
@@ -195,22 +196,18 @@ export async function runInbox(opts: { client: CliApiClient }): Promise<Approval
   }
 }
 
+/**
+ * REV-L-07 — `runtime.ts`의 `mapCommonApiError`(REV-H-03 도입)와 완전히 같은
+ * 모양이라 그 헬퍼에 위임한다. 이 파일 안에서 쓰는 이름은 유지한다(다른
+ * 세 개 실패 유니온이 이 이름을 참조한다).
+ */
 function mapListError(
   err: unknown,
   client: CliApiClient,
 ):
   | { ok: false; reason: 'server_unreachable'; serverUrl: string }
   | { ok: false; reason: 'unauthenticated' } {
-  if (err instanceof ServerUnreachableError) {
-    return { ok: false, reason: 'server_unreachable', serverUrl: client.baseUrl };
-  }
-  if (
-    err instanceof ApiRequestError &&
-    (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED)
-  ) {
-    return { ok: false, reason: 'unauthenticated' };
-  }
-  throw err;
+  return mapCommonApiError(err, client);
 }
 
 function presentListFailure(
@@ -363,18 +360,10 @@ function mapApprovalLookupError(
   | { ok: false; reason: 'not_found'; id: string }
   | { ok: false; reason: 'server_unreachable'; serverUrl: string }
   | { ok: false; reason: 'unauthenticated' } {
-  if (err instanceof ServerUnreachableError) {
-    return { ok: false, reason: 'server_unreachable', serverUrl: client.baseUrl };
+  if (err instanceof ApiRequestError && err.code === ErrorCode.APPROVAL_NOT_FOUND) {
+    return { ok: false, reason: 'not_found', id: idOrPrefix };
   }
-  if (err instanceof ApiRequestError) {
-    if (err.code === ErrorCode.APPROVAL_NOT_FOUND) {
-      return { ok: false, reason: 'not_found', id: idOrPrefix };
-    }
-    if (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
-  }
-  throw err;
+  return mapCommonApiError(err, client);
 }
 
 export async function runReview(opts: {
@@ -545,9 +534,6 @@ async function mapDecideError(
   opts: { client: CliApiClient; idOrPrefix: string },
   resolvedId: string,
 ): Promise<ApprovalDecideResult> {
-  if (err instanceof ServerUnreachableError) {
-    return { ok: false, reason: 'server_unreachable', serverUrl: opts.client.baseUrl };
-  }
   if (err instanceof ApiRequestError) {
     if (err.code === ErrorCode.APPROVAL_NOT_FOUND) {
       return { ok: false, reason: 'not_found', id: opts.idOrPrefix };
@@ -564,11 +550,8 @@ async function mapDecideError(
     if (err.code === ErrorCode.VALIDATION_ERROR) {
       return { ok: false, reason: 'validation', message: err.message };
     }
-    if (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED) {
-      return { ok: false, reason: 'unauthenticated' };
-    }
   }
-  throw err;
+  return mapCommonApiError(err, opts.client);
 }
 
 /** `already_resolved` 실패 1건의 안내문 — EVT-CH05-4 "기존 결정·처리시각" */

@@ -1,7 +1,7 @@
 import { createInterface } from 'node:readline';
-import { MAX_PAGE_SIZE } from '../shared/constants.js';
+import { ErrorCode, MAX_PAGE_SIZE } from '../shared/constants.js';
 import type { Pagination } from '../shared/types.js';
-import { ApiClient } from './api-client.js';
+import { ApiClient, ApiRequestError, ServerUnreachableError } from './api-client.js';
 import { loadAuth } from './config.js';
 import { errorBlock, shortId } from './output.js';
 
@@ -94,6 +94,37 @@ export function serverUnreachableBlock(serverUrl: string): string {
 
 export function unauthenticatedBlock(expired: boolean): string {
   return errorBlock(expired ? '토큰이 만료되었습니다' : '인증이 필요합니다', 'cm auth login');
+}
+
+/**
+ * REV-H-03 — `ServerUnreachableError`/`UNAUTHORIZED`·`AUTH_TOKEN_EXPIRED` 매핑을
+ * 한 곳에 모은다. `commands/approval.ts`의 `mapListError`가 이미 같은 모양을
+ * 썼다(REV-L-07 — "unreachable + 401" catch 블록이 CLI 12곳 이상에 복붙돼
+ * 있었다). 매치되지 않는 에러는 그대로 다시 던진다 — 호출부의 다른 `if`
+ * 분기(도메인 에러 코드)가 먼저 잡지 못한 나머지를 여기서 마지막으로
+ * 잡거나, 여기서도 못 잡으면 호출부가 원래 하던 대로 uncaught로 전파된다.
+ *
+ * `resolveId`(이 파일)는 내부에서 실제 HTTP로 목록을 훑는다 — 그 호출이
+ * try 밖에 있으면 서버가 죽었거나 토큰이 만료됐을 때 이 매핑을 거치지 못하고
+ * `index.ts`의 범용 "예기치 못한 오류" 처리로 떨어진다(§8 공통 에러 계약
+ * 위반). `resolveId` 호출부는 반드시 try로 감싸고 이 헬퍼로 잡는다.
+ */
+export function mapCommonApiError(
+  err: unknown,
+  client: CliApiClient,
+):
+  | { ok: false; reason: 'server_unreachable'; serverUrl: string }
+  | { ok: false; reason: 'unauthenticated' } {
+  if (err instanceof ServerUnreachableError) {
+    return { ok: false, reason: 'server_unreachable', serverUrl: client.baseUrl };
+  }
+  if (
+    err instanceof ApiRequestError &&
+    (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED)
+  ) {
+    return { ok: false, reason: 'unauthenticated' };
+  }
+  throw err;
 }
 
 // ─────────────────────────────────────────────

@@ -486,6 +486,58 @@ describe('ApprovalService.closeByRequester — R-04', () => {
   });
 });
 
+describe('REV-H-02/SEC-09 — 커밋 후 Agent 전이 실패가 응답을 깨지 않는다', () => {
+  // 도달 경로(개발 지시 원문): Agent A가 waiting, pending 승인 1건 보유 →
+  // 프로젝트를 cancelled로 전이 → 캐스케이드가 A를 cancelled로 만든다
+  // (waiting→cancelled는 허용 전이) → `cm decide <id> --approve` 시도 →
+  // approvals 행은 커밋되는데 이어지는 `cancelled→running` 시도가 422를 던져
+  // 응답만 실패하고 재시도는 409 APPROVAL_ALREADY_RESOLVED로 막다른 길이었다.
+  // 고친 뒤에는 `transitionRequesterStatus`가 전이 가능 여부를 먼저 검사해
+  // 불가능하면 예외 없이 건너뛴다 — approvals 갱신(200)과 Agent 상태는
+  // 서로 독립적으로 유지된다.
+  it('요청자 Agent가 cancelled 상태여도 resolve는 200으로 성공하고 Agent 상태는 그대로다', async () => {
+    const projectId = seedProject(testDb.db, { status: 'cancelled' });
+    const agentId = seedAgent(testDb.db, projectId, { status: 'cancelled' });
+    const id = seedApproval(testDb.db, { status: 'pending', requestedBy: agentId });
+
+    const resolved = await service.resolve(id, { status: 'approved', resolution: 'A' });
+
+    expect(resolved.status).toBe('approved');
+    // cancelled → running은 허용되지 않는 전이다(state-transitions.ts) — 예외를
+    // 던지지 않고 건너뛰어 Agent 상태가 cancelled로 그대로 남는다.
+    expect(agentRepo.findById(agentId)?.status).toBe('cancelled');
+  });
+
+  // request()도 같은 구조다 — 요청자가 created/paused면 → waiting 전이가
+  // 불가하다(AGENT_TRANSITIONS: created→['running','cancelled']뿐). approval·
+  // MSG-04 커밋 뒤 이 전이 시도가 422를 던지면 승인 요청 자체가 실패로
+  // 보고됐었다.
+  it('요청자 Agent가 created 상태여도 request는 성공하고 Agent 상태는 그대로다', async () => {
+    const projectId = seedProject(testDb.db, { status: 'running' });
+    const agentId = seedAgent(testDb.db, projectId, { status: 'created' });
+    const conversationId = crypto.randomUUID();
+    testDb.db
+      .prepare(
+        'INSERT INTO conversations (id, channel_type, entity_id, status, created_at) VALUES (?,?,?,?,?)',
+      )
+      .run(conversationId, 'agent', agentId, 'active', new Date().toISOString());
+
+    const detail = await service.request({
+      approvalType: 'APV-CHOICE',
+      level: 'high',
+      subject: 'created 상태 요청자',
+      options: [{ code: 'A', label: '승인' }],
+      requestedBy: agentId,
+      conversationId,
+    });
+
+    expect(detail).not.toBeNull();
+    expect(detail?.status).toBe('pending');
+    // created → waiting은 허용되지 않는 전이다 — 예외 없이 건너뛰어 created로 남는다.
+    expect(agentRepo.findById(agentId)?.status).toBe('created');
+  });
+});
+
 describe('ApprovalDetail.artifacts — §3 스텁 교체 회귀 테스트 (Layer 2-9)', () => {
   it('approvals.artifacts에 저장된 코드가 실제 artifacts 행 값(title·notionUrl·gitPath·syncStatus)으로 채워진다', async () => {
     const conversationId = seedMainChannel(testDb.db);

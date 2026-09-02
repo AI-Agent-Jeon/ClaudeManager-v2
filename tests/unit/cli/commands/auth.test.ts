@@ -6,6 +6,7 @@ import { ApiRequestError, ServerUnreachableError } from '../../../../src/cli/api
 import type { AuthApiClient } from '../../../../src/cli/commands/auth.js';
 import {
   createProgram,
+  defaultPromptSecret,
   registerAuthCommand,
   runLogin,
   runLogout,
@@ -139,6 +140,46 @@ describe('runLogin', () => {
     await expect(
       runLogin({ client, promptSecret: vi.fn().mockResolvedValue('s'), homeDir }),
     ).rejects.toThrow('boom');
+  });
+});
+
+describe('defaultPromptSecret — SEC-04 TTY 가드', () => {
+  let stdinTTY: PropertyDescriptor | undefined;
+  let stdoutTTY: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    stdinTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    stdoutTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+  });
+
+  afterEach(() => {
+    if (stdinTTY) Object.defineProperty(process.stdin, 'isTTY', stdinTTY);
+    else delete (process.stdin as { isTTY?: boolean }).isTTY;
+    if (stdoutTTY) Object.defineProperty(process.stdout, 'isTTY', stdoutTTY);
+    else delete (process.stdout as { isTTY?: boolean }).isTTY;
+  });
+
+  function setTTY(stdin: boolean, stdout: boolean): void {
+    Object.defineProperty(process.stdin, 'isTTY', { value: stdin, configurable: true });
+    Object.defineProperty(process.stdout, 'isTTY', { value: stdout, configurable: true });
+  }
+
+  it('stdin은 TTY지만 stdout이 아니면(리다이렉트) NOT_TTY로 거부한다', async () => {
+    // `cm auth login > login.log` 재현 — 이전 가드(stdin.isTTY만 확인)는
+    // 이 경우를 통과시켜 readline이 terminal:false로 열리고 마스킹이
+    // 무력화됐다(SEC-04). 지금은 stdout도 함께 확인해 여기서 막는다.
+    setTTY(true, false);
+    await expect(defaultPromptSecret('시크릿: ')).rejects.toThrow('NOT_TTY');
+  });
+
+  it('stdout은 TTY지만 stdin이 아니면 NOT_TTY로 거부한다', async () => {
+    setTTY(false, true);
+    await expect(defaultPromptSecret('시크릿: ')).rejects.toThrow('NOT_TTY');
+  });
+
+  it('stdin·stdout 둘 다 TTY가 아니면 NOT_TTY로 거부한다', async () => {
+    setTTY(false, false);
+    await expect(defaultPromptSecret('시크릿: ')).rejects.toThrow('NOT_TTY');
   });
 });
 

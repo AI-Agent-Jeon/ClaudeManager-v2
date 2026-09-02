@@ -232,6 +232,26 @@ describe('runChatAgentOpen', () => {
     const result = await runChatAgentOpen({ client, idOrPrefix: AGENT_DETAIL.id });
     expect(result).toEqual({ ok: false, reason: 'no_conversation', agentId: AGENT_DETAIL.id });
   });
+
+  it(
+    'REV-H-04 — Agent 조회는 성공한 뒤 메시지 조회에서 서버가 끊기면 uncaught로 ' +
+      '전파되지 않고 server_unreachable로 매핑된다 (runChatMainOpen과 같은 보호)',
+    async () => {
+      const get = routedGet((path) => {
+        if (path === `/agents/${AGENT_DETAIL.id}`) return { data: AGENT_DETAIL };
+        throw new ServerUnreachableError('http://127.0.0.1:3000/api');
+      });
+      const client = fakeClient({ get });
+
+      const result = await runChatAgentOpen({ client, idOrPrefix: AGENT_DETAIL.id });
+
+      expect(result).toEqual({
+        ok: false,
+        reason: 'server_unreachable',
+        serverUrl: 'http://127.0.0.1:3000/api',
+      });
+    },
+  );
 });
 
 describe('runChatRepl', () => {
