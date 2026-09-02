@@ -51,11 +51,21 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   `StageService → ApprovalService`는 허용된 Service 간 의존 4건 중 하나 — `ApprovalRepository`는 직접 만지지 않는다)
   ③WIP=1 위반인데 `wip_waivers` 면제가 없는가(`409 WIP_VIOLATION`). 성공 시 `stages.status='in_progress'`·`started_at`·
   `phases.current_stage`·`status_changes`를 한 트랜잭션으로 갱신하고, 커밋 후 `stage:changed`를 브로드캐스트한다.
-  `StageService.complete()`(`in_progress → completed`)도 함께 구현했으나 DES-002 엔드포인트 목록에 대응 라우트가
-  없어 서비스 메서드로만 존재한다 — HTTP로는 열지 않는다
+  `StageService.complete()`(`in_progress → completed`)도 함께 구현했다 — 대응 라우트는 Layer 2-8 보완(아래)에서 연다
 - `PhaseRepository`에 stage 조회·전이 메서드 추가 — `findStageById()`·`findStagesByPhase()`(집계 없이 가벼운 조회,
   가드 1의 직전 단계 탐색용)·`findStageWithAggregates()`(단계 1건 집계, `findStagesWithAggregates`와 SQL을 공유하도록
   `stageAggregateSql()`로 추출)·`startStage()`·`completeStage()`·`updateCurrentStage()`
+- **Layer 2-8 보완 — `POST /api/stages/:id/complete` 라우트 신설** (대표 승인 A안). `StageService.complete()`는
+  Layer 2-8에서 이미 구현됐지만 대응 HTTP 엔드포인트가 없었다 — DES-002 §3-3 엔드포인트 목록에 `complete`가
+  빠져 있던 설계 누락으로, `start`의 가드 1("직전 단계가 `completed`인가")을 만족시킬 방법이 없어 `plan` 착수
+  이후 어떤 후속 단계도 영원히 착수할 수 없는 플로우 단절이 있었다. `start` 라우트와 같은 모양으로
+  `POST /api/stages/:id/complete`를 추가: 성공 시 `200`+`StageSummary`(`status='completed'`·`completed_at` 기록),
+  대상 없음 `404 STAGE_NOT_FOUND`, `in_progress`가 아니면 `422 INVALID_TRANSITION`. `phases.current_stage`는
+  바꾸지 않는다(다음 `start`가 갱신). 선행 조건(산출물 개수·승인 상태)은 검사하지 않는다 — 검사를 걸면
+  게이트 강제 지점이 `start` 하나가 아니게 되어 R-03("게이트 강제는 start 한 곳에서만")이 흐려진다.
+  본문 없이 호출 가능하되 `preValidation`으로 `undefined` 본문을 `{}`로 정규화한 뒤 `additionalProperties: false`
+  스키마를 통과시켜, 본문을 보내지 않은 요청은 통과시키고 알 수 없는 필드가 있는 본문은 거부한다.
+  플로우 회귀 테스트로 `plan` 착수 → 완료 → `analyze` 착수가 실제로 성공하는지 고정
 
 ### Changed
 

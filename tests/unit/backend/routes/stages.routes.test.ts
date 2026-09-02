@@ -108,6 +108,21 @@ async function startStage(stageId: string) {
   });
 }
 
+async function completeStage(stageId: string, payload?: Record<string, unknown>) {
+  return app.inject({
+    method: 'POST',
+    url: `/api/stages/${stageId}/complete`,
+    headers: authHeader(),
+    ...(payload !== undefined ? { payload } : {}),
+  });
+}
+
+function getPhase(phaseId: string): { current_stage: string | null } {
+  return app.db.prepare('SELECT current_stage FROM phases WHERE id = ?').get(phaseId) as {
+    current_stage: string | null;
+  };
+}
+
 describe('POST /api/stages/:id/start — FR-030 3단 가드', () => {
   it('존재하지 않는 단계 id면 404 STAGE_NOT_FOUND', async () => {
     const res = await startStage(crypto.randomUUID());
@@ -219,5 +234,137 @@ describe('POST /api/stages/:id/start — 응답 스키마', () => {
     expect(gate).toHaveProperty('required');
     expect(gate).toHaveProperty('approvalId');
     expect(gate).toHaveProperty('passed');
+  });
+});
+
+/**
+ * POST /api/stages/:id/complete — Layer 2-8 보완 (대표 승인 A안)
+ *
+ * DES-002 §3-3 엔드포인트 목록에 `complete`가 빠져 있어 `plan` 착수 이후
+ * 어떤 후속 단계도 착수할 수 없던 단절을 해소한다. 선행 조건(산출물·승인)은
+ * 두지 않는다 — 대표 지시 §1.
+ */
+describe('POST /api/stages/:id/complete', () => {
+  it('in_progress 단계를 completed로 전이하고 completed_at을 기록한다', async () => {
+    const current = await createPhaseWithStages(201);
+    const plan = findStage(current, 'plan');
+    seedApprovedGate(plan.id);
+    await startStage(plan.id);
+
+    const res = await completeStage(plan.id);
+    expect(res.statusCode).toBe(200);
+    const data = res.json().data as StageSummaryLike & { completedAt: string | null };
+    expect(data.status).toBe('completed');
+    expect(data.completedAt).not.toBeNull();
+  });
+
+  it('pending 단계를 완료하려 하면 422 INVALID_TRANSITION', async () => {
+    const current = await createPhaseWithStages(202);
+    const analyze = findStage(current, 'analyze');
+
+    const res = await completeStage(analyze.id);
+    expect(res.statusCode).toBe(422);
+    expect(res.json().code).toBe('INVALID_TRANSITION');
+  });
+
+  it('이미 completed인 단계를 재완료하려 하면 422 INVALID_TRANSITION', async () => {
+    const current = await createPhaseWithStages(203);
+    const plan = findStage(current, 'plan');
+    seedApprovedGate(plan.id);
+    await startStage(plan.id);
+    await completeStage(plan.id);
+
+    const res = await completeStage(plan.id);
+    expect(res.statusCode).toBe(422);
+    expect(res.json().code).toBe('INVALID_TRANSITION');
+  });
+
+  it('존재하지 않는 단계 id면 404 STAGE_NOT_FOUND', async () => {
+    const res = await completeStage(crypto.randomUUID());
+    expect(res.statusCode).toBe(404);
+    expect(res.json().code).toBe('STAGE_NOT_FOUND');
+  });
+
+  it('완료해도 phases.current_stage는 바뀌지 않는다 (다음 start가 갱신한다)', async () => {
+    const current = await createPhaseWithStages(204);
+    const plan = findStage(current, 'plan');
+    seedApprovedGate(plan.id);
+    await startStage(plan.id);
+    expect(getPhase(current.phase.id).current_stage).toBe('plan');
+
+    await completeStage(plan.id);
+
+    expect(getPhase(current.phase.id).current_stage).toBe('plan');
+  });
+
+  it('완료 시 status_changes에 entity_type=stage로 기록된다', async () => {
+    const current = await createPhaseWithStages(205);
+    const plan = findStage(current, 'plan');
+    seedApprovedGate(plan.id);
+    await startStage(plan.id);
+
+    await completeStage(plan.id);
+
+    const changes = app.db
+      .prepare(
+        "SELECT * FROM status_changes WHERE entity_type = 'stage' AND entity_id = ? AND to_status = 'completed'",
+      )
+      .all(plan.id) as { from_status: string | null; to_status: string }[];
+    expect(changes.length).toBe(1);
+    expect(changes[0]?.from_status).toBe('in_progress');
+  });
+
+  it('요청 본문에 알 수 없는 필드가 있으면 400 (additionalProperties: false)', async () => {
+    const current = await createPhaseWithStages(206);
+    const plan = findStage(current, 'plan');
+    seedApprovedGate(plan.id);
+    await startStage(plan.id);
+
+    const res = await completeStage(plan.id, { note: '허용되지 않는 필드' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('요청 본문 없이 호출해도 200 (본문 불필요)', async () => {
+    const current = await createPhaseWithStages(207);
+    const plan = findStage(current, 'plan');
+    seedApprovedGate(plan.id);
+    await startStage(plan.id);
+
+    const res = await completeStage(plan.id);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('인증 없이 요청하면 401', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/stages/${crypto.randomUUID()}/complete`,
+    });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+/**
+ * 플로우 회귀 테스트 (개발 지시 §3, 중요) — 이번에 고친 단절의 방어선.
+ * `complete` 라우트가 없으면 `plan` 착수 후 `analyze`를 영원히 착수할 수
+ * 없었다(가드 1 "직전 단계가 completed"를 만족시킬 방법이 없었으므로).
+ * plan은 게이트 필요 단계라 APV-GATE 승인을 갖춘 상태로 구성한다.
+ */
+describe('플로우 회귀 — plan 착수 → 완료 → analyze 착수 (Layer 2-8 보완의 방어선)', () => {
+  it('plan을 착수·완료한 뒤 analyze 착수가 실제로 성공한다', async () => {
+    const current = await createPhaseWithStages(301);
+    const plan = findStage(current, 'plan');
+    const analyze = findStage(current, 'analyze');
+    seedApprovedGate(plan.id);
+
+    const startRes = await startStage(plan.id);
+    expect(startRes.statusCode).toBe(200);
+
+    const completeRes = await completeStage(plan.id);
+    expect(completeRes.statusCode).toBe(200);
+    expect((completeRes.json().data as StageSummaryLike).status).toBe('completed');
+
+    const analyzeStartRes = await startStage(analyze.id);
+    expect(analyzeStartRes.statusCode).toBe(200);
+    expect((analyzeStartRes.json().data as StageSummaryLike).status).toBe('in_progress');
   });
 });

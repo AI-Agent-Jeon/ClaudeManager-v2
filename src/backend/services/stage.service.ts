@@ -138,11 +138,15 @@ export class StageService {
   }
 
   /**
-   * `in_progress → completed` 전이. DES-002에는 이 전이를 여는 HTTP 엔드포인트가
-   * 없다(§0 사전 조사 — 목록에 `stages/:id/complete`가 없다). `DES-004 §전체
-   * 함수 시그니처 요약`이 `StageService.complete()`를 명시하므로 서비스
-   * 메서드로는 구현하되, 라우트는 열지 않는다 — 이후 계층(ArtifactService 등)이
-   * 내부에서 호출할 진입점으로 남긴다.
+   * `in_progress → completed` 전이. `POST /api/stages/:id/complete`
+   * (`stages.routes.ts`)가 이 메서드를 그대로 호출한다(Layer 2-8 보완,
+   * 대표 승인 A안 — DES-002 §3-3 엔드포인트 목록 누락 보완).
+   *
+   * 선행 조건은 두지 않는다 — 산출물 개수·승인 상태를 검사하지 않는다.
+   * 그 판단은 대표의 몫이며, 여기서 검사를 걸면 `start`의 3단 가드에 이은
+   * 두 번째 강제 지점이 생겨 R-03("게이트 강제는 start 한 곳에서만")이
+   * 흐려진다. `phases.current_stage`도 바꾸지 않는다 — 다음 `start`가
+   * 갱신한다.
    */
   async complete(id: string): Promise<StageSummary> {
     const stage = this.getStageOrThrow(id);
