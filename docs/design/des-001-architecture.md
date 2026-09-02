@@ -1,7 +1,7 @@
 # DES-001 아키텍처 설계서
 
 > Phase 1: 기반 구축
-> 버전: **v3.1 (2026-09-02)** — 교차 검증 정정. Phase 1 컴포넌트 18 → 35종 + ADR-012
+> 버전: **v3.2 (2026-09-02)** — 교차 검증 반영. Phase 1 컴포넌트 18 → 36종 + ADR-012
 > **원본**: [Notion DES-001](https://app.notion.com/p/3c5d066504ec81b78014c7ccd8cb0723) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -139,6 +139,10 @@ graph TD
             TimeoutJob["ApprovalTimeoutJob<br>60초 주기"]
         end
 
+        subgraph Boot["Startup"]
+            Bootstrap["BootstrapService<br>CH-MAIN · Phase 1 · 7단계<br>멱등 시드 (ready 훅)"]
+        end
+
         StateMachine["State Machine<br>상태 전이 검증 (6종)"]
         WsHub["WebSocket Hub<br>채널별 브로드캐스트"]
     end
@@ -174,6 +178,7 @@ graph TD
     ConvService --> WsHub
     ApprovalService --> ApprovalRepo
     ApprovalService --> ConvService
+    ApprovalService --> AgentService
     ApprovalService --> StateMachine
     ApprovalService --> WsHub
     PhaseService --> PhaseRepo
@@ -183,6 +188,8 @@ graph TD
     ArtifactService --> ArtifactRepo
 
     TimeoutJob --> ApprovalService
+    Bootstrap --> ConvService
+    Bootstrap --> PhaseService
 
     WsHub --> WsPlugin
 
@@ -199,6 +206,14 @@ graph TD
 ```
 
 > **`AgentService → ConversationService` 의존이 v3에서 추가되었다.** Agent 생성 시 CH-AGENT 개설, 종료 시 `readonly`, 삭제 시 `archived` 전환이 필요하기 때문이다 (D-27 · DES-007 v2 §5-1). 역방향 의존은 없다.
+
+> **`ApprovalService → AgentService` 의존이 v3.2에서 추가되었다 (R-02).**
+> DES-007 v2 §3-2·§6-2가 규정한 **승인 ↔ Agent 상태 연동**(요청 발행 시 `running→waiting`, 승인·조건부·자동진행 시 `waiting→running`)을 실행할 주체가 v3에는 없었다. DES-004 v2 §15·§17이 그 전이를 그렸으나 아키텍처에 경로가 없어 **설계된 전이를 구현할 수 없는 상태**였다.
+> 순환은 생기지 않는다 — `ApprovalService → AgentService → ConversationService`로 단방향이고, `AgentService`는 `ApprovalService`를 부르지 않는다. 이벤트 버스 도입안은 1인 로컬 MVP에 과잉이라 기각했다(RISK-006 복잡도 과소평가가 **높음**으로 상향된 상태다).
+
+> **`BootstrapService`가 v3.2에서 추가되었다 (R-01).**
+> PLN-001 FR-026 수용 기준("시스템이 최초 기동될 때 CH-MAIN 채널 1개가 자동 생성")과 DES-007 v2 §7("Phase 생성 시 7단계 일괄 생성")을 실행할 주체가 없었다. 이것이 없으면 `cm chat main`·`cm progress`·`cm stage start`가 **빈 DB를 만나 전부 실패한다.**
+> Jobs와 같은 규칙을 따른다 — **Service만 호출하고 Repository를 직접 만지지 않는다.** 시드가 비즈니스 규칙(CH-MAIN 전역 1개, Phase당 7단계)을 우회하면 안 되기 때문이다.
 
 ### Component 상세
 
@@ -228,7 +243,7 @@ graph TD
 | **Conversation Repository** | 채널 데이터 액세스 | Database Plugin | **FR-026** |
 | **Message Repository** | 메시지 CRUD + **FTS5 전문 검색** | Database Plugin | **FR-027** |
 | **Approval Routes** | 승인 목록·상세·처리 엔드포인트 | Approval Service | **FR-028** |
-| **Approval Service** | 의사결정 요청 발행, 승인 처리, 타임아웃 판정 | Approval Repo, Conversation Service, State Machine, WS Hub | **FR-028, FR-030** |
+| **Approval Service** | 의사결정 요청 발행, 승인 처리, 타임아웃 판정, **Agent 상태 연동** | Approval Repo, Conversation Service, **Agent Service**, State Machine, WS Hub | **FR-028, FR-030** |
 | **Approval Repository** | 승인 데이터 액세스 | Database Plugin | **FR-028** |
 | **Phase·Stage Routes** | Phase 현황, 단계 착수, WIP 면제 엔드포인트 | Phase/Stage Service | **FR-029, FR-030** |
 | **Phase Service** | Phase 현황 집계, **WIP 규칙 검사** | Phase Repo | **FR-029** |
@@ -239,6 +254,7 @@ graph TD
 | **Artifact Repository** | 산출물 데이터 액세스 | Database Plugin | **FR-031** |
 | **WebSocket Hub** | 채널별 소켓 등록·브로드캐스트. **버퍼링하지 않는다** | WebSocket Plugin | **NFR-003** |
 | **ApprovalTimeoutJob** | 60초 주기 만료 승인 자동 진행 (APV-GATE 제외) | Approval Service | **FR-028 (D-10)** |
+| **BootstrapService** | 서버 `ready` 훅에서 **CH-MAIN · Phase 1 · 7단계 멱등 시드**. 실패 시 기동 중단 | Conversation Service, Phase Service | **FR-026, FR-029 (R-01)** |
 
 ### Must Story → Component 매핑 검증
 
@@ -322,7 +338,8 @@ D-10에 따라 등급 '보통' 승인은 30분 후 자동 진행된다. 이를 �
 #### 결과
 
 - `src/backend/jobs/approval-timeout.job.ts`
-- 서버 `ready` 훅에서 `start()`, Graceful Shutdown에서 `stop()`
+- 서버 `ready` 훅에서 **`BootstrapService.seed()` 완료 후** `start()`, Graceful Shutdown에서 `stop()`
+  - 순서가 중요하다 — 시드가 끝나기 전에 잡이 돌면 조회 대상 테이블이 비어 있다
 - **tick 중복 실행 방지**: 이전 tick이 끝나지 않았으면 건너뛴다. `setInterval`은 실행 시간을 기다리지 않는다
 - 실패해도 서버를 죽이지 않는다. tick 내부 예외는 로깅 후 삼킨다
 
@@ -337,8 +354,9 @@ D-10에 따라 등급 '보통' 승인은 30분 후 자동 진행된다. 이를 �
 ### 의존 방향
 
 ```
-Routes  →  Services  →  Repositories  →  Database Plugin  →  SQLite
-Jobs    →  Services                    (Repository 직접 접근 금지)
+Routes     →  Services  →  Repositories  →  Database Plugin  →  SQLite
+Jobs       →  Services                 (Repository 직접 접근 금지)
+Bootstrap  →  Services                 (동일 — 시드가 비즈니스 규칙을 우회하면 안 된다)
            →  State Machine   (순수 함수, 외부 의존 없음)
            →  StatusChange Service  (상태 변경 로그)
            →  WebSocket Hub   (브로드캐스트, 단방향 출력)
@@ -352,11 +370,15 @@ Jobs    →  Services                    (Repository 직접 접근 금지)
 4. **Repository는 Drizzle 쿼리만**: 비즈니스 로직 포함 금지
 5. **State Machine은 순수 함수**: 외부 의존 없이 전이 규칙만 검증
 6. **StatusChange Service는 횡단 관심사**: 모든 엔티티 Service에서 사용
-7. **Jobs는 Service만 호출** (v3) — Repository 직접 접근 금지. 잡이 비즈니스 규칙을 우회하면 안 된다
+7. **Jobs·Bootstrap은 Service만 호출** (v3 · v3.2) — Repository 직접 접근 금지. 잡이나 시드가 비즈니스 규칙을 우회하면 안 된다
 8. **WebSocket Hub는 출력 전용** (v3) — Hub가 Service를 호출하지 않는다. 호출하면 순환이 생긴다
+9. **교차 애그리거트 트랜잭션은 Route가 조율한다** (v3.2) — 두 Service를 한 트랜잭션에 묶어야 하는데 **그 방향이 순환을 만든다면**, Service끼리 부르지 말고 Route 핸들러가 `db.transaction()` 안에서 순서대로 호출한다. better-sqlite3는 동기식이라 가능하다.
+   - 적용 사례: `DELETE /api/agents/:id` → `approvalService.closeByRequester()` + `agentService.delete()` (R-04). `AgentService → ApprovalService`를 추가하면 규칙 앞의 `ApprovalService → AgentService`와 **양방향 순환**이 된다
 
-> **허용된 Service 간 의존 3건** (순환 아님, 단방향)
-> `AgentService → ConversationService` · `ApprovalService → ConversationService` · `StageService → ApprovalService`
+> **허용된 Service 간 의존 4건** (순환 아님, 단방향)
+> `AgentService → ConversationService` · `ApprovalService → ConversationService` · **`ApprovalService → AgentService`** (v3.2 · R-02) · `StageService → ApprovalService`
+>
+> 위상 정렬이 성립한다: `StageService → ApprovalService → AgentService → ConversationService`. 역방향 간선은 하나도 없다.
 
 ### Cross-Cutting Concerns
 
@@ -382,6 +404,23 @@ Jobs    →  Services                    (Repository 직접 접근 금지)
 
 > **RISK-010(인증 보안)의 "localhost only 바인딩" 전제는 Phase 1에서 유효하다.** v1의 개정 필요 항목은 터널링이 Phase 1에 있다는 가정이었으나, 그 가정이 D-19 연기로 해소되었다.
 > Phase 2 착수 시 터널 노출 범위·인증 경계를 재정의한다. Web Push(APNs/FCM 경유)도 그때 Context Diagram에 추가한다.
+
+---
+
+## 기동 순서 — **v3.2 신규 (R-01)**
+
+Graceful Shutdown의 역순이다. 순서가 어긋나면 조용히 반쪽으로 도는 서버가 된다.
+
+1. 설정 로드 → `CM_AUTH_SECRET` 확인 (없으면 랜덤 생성 후 콘솔 출력)
+2. Database Plugin 연결 → `PRAGMA foreign_keys = ON`
+3. **마이그레이션 적용** (Drizzle migrate) — 001~006
+4. Fastify 플러그인·라우트 등록
+5. **`BootstrapService.seed()`** — CH-MAIN · Phase 1 · 7단계 멱등 시드 (DES-002 v2.1 §5-1)
+6. `ApprovalTimeoutJob.start()` — 60초 주기 시작
+7. `listen(127.0.0.1:3000)` — 요청 수신 개시
+
+> **5가 실패하면 6·7로 넘어가지 않고 프로세스를 종료한다.** 시드 없이 뜬 서버는 `cm chat main`·`cm progress`·`cm stage start`가 전부 실패하는 반쪽 상태다. 기동을 막아 즉시 드러나게 한다.
+> **5는 3 이후여야 한다.** 시드 대상 테이블(`conversations`·`phases`·`stages`)이 마이그레이션으로 만들어진다.
 
 ---
 
@@ -511,3 +550,4 @@ Phase 1의 FR-002는 토큰 기반 인증을 요구한다. 1인 사용자 로컬
 | — | 2026-09-01 | Git 동기화 + 승인 반영 필요 항목 주석 추가 (내용 변경 없음) |
 | **v3.0** | 2026-09-01 | **승인 반영 개정.** Component Diagram에 **Routes 4종 · Service 5종 · Repository 6종 · WebSocket Hub · ApprovalTimeoutJob · WebSocket Plugin 추가**(Phase 1 컴포넌트 18 → 35종).<br>**ADR-012 신설 — 타임아웃 잡을 Fastify 프로세스 내부 타이머로 확정**(SQLite 단일 쓰기자 전제와 충돌하는 별도 워커안 기각). DES-002 v2·DES-004 v2가 두 번 걸어둔 미해결 해소.<br>레이어 규칙 2건 추가(Jobs는 Service만 호출 · WS Hub는 출력 전용), 허용된 Service 간 단방향 의존 3건 명시. WebSocket 인증을 Cross-Cutting에 편입. **접속 경계를 Phase 1 루프백 전용으로 확정**(D-19 연기 반영). Graceful Shutdown에 잡 정지·소켓 정리 2단계 추가. 미해결 2건 등록 |
 | **v3.1** | 2026-09-02 | **교차 검증 정정 (내용 변경 없음, 표기 정합).** 컴포넌트 수 오기 정정 — Component 상세 표 실제 행 기준 **18 → 35종**(v3.0 본문의 "17 → 30종"은 집계 오류).<br>**RISK-010 경고 정정** — D-19 터널링이 Phase 2로 연기되어 "localhost only 전제가 깨진다"는 §접속 경계의 확정과 모순이었다. **전제 유효**로 정정.<br>Phase 2+ 확장표 **FR-018 Phase 2 → 1**(D-16 편입 완료) · **FR-015 Phase 4 → 2**(D-23). Must Story 매핑에 **FR-005 누락 보완** |
+| **v3.2** | 2026-09-02 | **교차 검증 반영 (승인 R-01·R-02).** 컴포넌트 35 → **36종**.<br>**`BootstrapService` 신설** — 서버 `ready` 훅에서 CH-MAIN·Phase 1·7단계를 멱등 시드. PLN-001 FR-026 수용 기준과 DES-007 §7을 실행할 주체가 없어 **빈 DB에서 `cm chat main`·`cm progress`·`cm stage start`가 전부 실패하는 상태**였다. **§기동 순서 신설**(7단계, Graceful Shutdown의 역순).<br>**`ApprovalService → AgentService` 의존 추가** — DES-007 §3-2·§6-2의 승인↔Agent 상태 연동을 실행할 경로가 아키텍처에 없었다. 허용된 Service 간 의존 **3건 → 4건**, 위상 정렬 `Stage → Approval → Agent → Conversation` 성립 명시. 이벤트 버스안은 1인 로컬 MVP에 과잉이라 기각.<br>레이어 규칙 7을 **Jobs·Bootstrap 공통**으로 확장(Repository 직접 접근 금지), **규칙 9 신설** — 교차 애그리거트 트랜잭션은 Route가 조율한다. Agent 삭제 시 승인 마감(R-04)을 `AgentService → ApprovalService`로 구현하면 규칙 9 없이는 순환이 된다 |

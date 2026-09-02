@@ -83,7 +83,8 @@ CLAUDE.md 개발 방법론은 **반복적 점진개발 + 칸반, 주요 단계 W
 | **APV-CHOICE** | 라이브러리·전략 선택 | 스킬 선택, 테스트 전략 | 보통 | 동일 |
 | **APV-RETRY** | 재시도·취소 판단 | Agent `failed` 발생 | 보통 | 운영 판단 |
 
-> **낮음** 등급(변수명·파일 구조·코드 스타일)은 승인함에 올라오지 않는다. status_changes 이력에만 남는다. (DES-013 §3-4와 동일 원칙)
+> **낮음** 등급(변수명·파일 구조·코드 스타일)은 승인함에 올라오지 않는다. **`MSG-05` 시스템 이벤트로 대화에만 남는다** (v1.1 정정 · R-06).
+> v1은 "`status_changes` 이력에만 남는다"고 적었으나, `status_changes`는 **엔티티의 상태 전이 로그**라서 낮음 결정을 담을 `entity_id`가 없다 — 자율 판단은 대개 어떤 엔티티의 상태도 바꾸지 않는다. 대화에 남기면 "무엇을 자율 판단했는지"가 감사되고 승인함은 오염되지 않는다. (DES-013 §3-4와 동일 원칙)
 
 ### 3-2. APV-GATE 특수 규칙
 
@@ -95,48 +96,50 @@ CLAUDE.md 개발 방법론은 **반복적 점진개발 + 칸반, 주요 단계 W
 | 타임아웃 | **없음** — 무기한 대기 | 보통 등급은 타임아웃 있음 |
 | 블로킹 대상 | **Phase 전체** — 다음 단계 시작 불가 | 해당 Agent만 |
 | 검토 대상 | **직전 단계 산출물 전체** (예: PLN-001~005) | 개별 안건의 근거 |
-| 반려 시 | 직전 단계로 되돌아가 보완 | 요청 Agent가 대안 제시 |
+| 반려 시 | **다음 단계 착수 차단이 유지된다.** 보완 후 새 `APV-GATE`를 발행해 다시 승인 사이클을 돈다 (v1.1 · R-03 — `stages`는 전이하지 않는다) | 요청 Agent가 대안 제시 |
 
 ### 3-3. 승인 상태 머신
 
-> **⚠ 이 절은 v1 초안이며 확정본과 다르다 (2026-09-02 교차 검증).**
-> **확정 원본은 DES-007 v2 §6**이다. 아래 다이어그램과 3건이 어긋난다.
+> **✅ v1.1에서 확정본(DES-007 v2 §6)으로 정정 (2026-09-02 · 승인 R-05).**
+> v1 초안은 6종(`expired` 포함) + `conditional` 재전이 + 조건의 Task 자동 생성으로 적혀 있었다. 아래가 확정본이다.
 >
-> | 항목 | 이 절(초안) | **DES-007 v2 확정** |
-> |------|-----------|-------------------|
-> | 상태 수 | 6종 (`expired` 포함) | **5종** — `expired` 없음 (DES-003 v2 CHECK · DES-009 v3) |
-> | `conditional` | `approved`/`rejected`로 재전이 | **종료 상태** (`conditional: []`) |
-> | `conditional` 후속 | 조건을 **Task로 자동 생성** | 조건을 **MSG-01로 기록** (Task 자동 생성 로직은 DES-002·DES-004에 없다) |
->
-> 어느 쪽을 확정으로 삼을지는 **대표 승인 안건**이다. 승인 전까지 **구현은 DES-007 v2를 따른다.**
+> | 항목 | v1 초안 | **확정** | 근거 |
+> |------|--------|---------|------|
+> | 상태 수 | 6종 (`expired`) | **5종** | 만료는 `auto_advanced`로 귀결. DES-003 v2 CHECK · DES-009 v3 |
+> | `conditional` | `approved`/`rejected`로 재전이 | **종료 상태** | 조건 충족 확인은 새 승인 사이클이지 같은 건의 재전이가 아니다 |
+> | 조건 처리 | **Task 자동 생성** | 조건을 **`MSG-01`로 기록** | 조건 텍스트를 Task로 변환하는 규칙이 DES-002·DES-004 어디에도 없다. **Phase 1 범위에서 제외** |
+> | Agent 삭제 시 | `expired` 전이 | **`rejected` + `resolution='system:agent_deleted'`** | 상태를 늘리지 않는다 (R-04 · D-11과 같은 원칙) |
 
 ```mermaid
 stateDiagram-v2
-    [*] --> pending: 요청 발행
+    [*] --> pending: 요청 발행 (MSG-04)
     pending --> approved: 대표 승인
     pending --> rejected: 대표 반려 (사유 필수)
     pending --> conditional: 조건부 승인 (조건 기재 필수)
     pending --> auto_advanced: 타임아웃 경과 (보통 등급만)
-    pending --> expired: 대상 Agent 취소·삭제
-
-    conditional --> approved: 조건 충족 확인
-    conditional --> rejected: 조건 미충족
 
     approved --> [*]
     rejected --> [*]
+    conditional --> [*]
     auto_advanced --> [*]
-    expired --> [*]
+
+    note right of rejected
+        Agent 삭제 시 미처리 건도
+        여기로 마감된다 (R-04)
+        resolution='system:agent_deleted'
+    end note
 ```
 
-| 상태 | 후속 동작 |
-|------|----------|
-| `approved` | 요청 Agent 재개. APV-GATE면 다음 스킬 단계 시작 |
-| `rejected` | 요청 Agent는 `waiting` 유지 + 사유를 MSG-01로 대화에 기록. APV-GATE면 직전 단계로 복귀 |
-| `conditional` | 조건을 Task로 자동 생성 후 Agent 재개 |
-| `auto_advanced` | Agent 계속 진행. MSG-05로 "타임아웃 자동 진행" 기록 |
-| `expired` | 승인함에서 제거, 이력에는 보존 |
+| 상태 | Agent | 단계(`stages`) |
+|------|-------|------|
+| `approved` | `waiting` → `running` | **바뀌지 않는다.** APV-GATE면 게이트만 열린다 |
+| `rejected` | **`waiting` 유지** + 사유를 `MSG-01`로 기록 | **바뀌지 않는다.** 다음 단계 착수 차단이 유지된다 |
+| `conditional` | `waiting` → `running` | 바뀌지 않는다. 조건을 `MSG-01`로 기록 |
+| `auto_advanced` | `waiting` → `running` | 바뀌지 않는다. `MSG-05`로 "타임아웃 자동 진행" 기록 |
 
-> **APV-GATE는 `auto_advanced`로 전이할 수 없다.** 상태 머신 구현 시 등급 검사로 차단한다.
+> **APV-GATE는 `auto_advanced`로 전이할 수 없다.** 이중 방어다 — `APV-GATE`는 등급 `high` 고정이라 `deadline_at`이 NULL이므로 스케줄러 조회에 애초에 잡히지 않고, 그럼에도 잡 내부에서 유형을 한 번 더 검사한다.
+>
+> **승인은 `stages`를 전이시키지 않는다 (R-03).** 착수는 `POST /api/stages/:id/start`의 3단 게이트 검증을 지나야 한다. §3-2 "반려 시 직전 단계로 되돌아가 보완"도 **"다음 단계 착수 차단이 유지되고, 보완 후 새 `APV-GATE`를 발행한다"**로 읽는다 — 완료된 단계를 되돌리면 그 단계 산출물의 처리가 새로 열린다.
 
 ---
 
@@ -293,7 +296,7 @@ APV-GATE의 경우 **산출물 탭에 직전 단계 산출물 전체**가 자동
 | EVT-AP-5 | [승인] 클릭 | 체크리스트 완료 | 모달 | MOD-12 승인 확인 | 안건 요약, 후속 동작 안내 | — |
 | EVT-AP-6 | MOD-12 [확정] | — | 화면이동 + 토스트 | 목록 (해당 건 제거) | "승인됨 · {Agent} 재개" | POST /api/approvals/:id/resolve |
 | EVT-AP-7 | [반려] 클릭 | 사유 1자 이상 | 모달 | MOD-13 반려 확인 | 사유 에코, 되돌아갈 단계 | — |
-| EVT-AP-8 | [조건부 승인] 클릭 | 사유 1자 이상 | 모달 | MOD-14 조건 확인 | 조건 → 생성될 Task 미리보기 | POST /api/approvals/:id/resolve |
+| EVT-AP-8 | [조건부 승인] 클릭 | 조건 1자 이상 | 모달 | MOD-14 조건 확인 | 조건 원문 + "이 조건은 `MSG-01`로 대화에 기록됩니다" 안내 (v1.1 · R-05 — **Task 자동 생성은 Phase 1 범위 밖**) | POST /api/approvals/:id/resolve |
 | EVT-AP-9 | 등급 '보통' 다중 선택 | 선택 ≥2, 전부 보통 | 인라인갱신 | 상단 일괄 액션 바 | 선택 건수, [일괄 승인] | — |
 | EVT-AP-10 | 등급 '높음' 다중 선택 시도 | — | 토스트 | — | "등급 높음은 건별로 처리해야 합니다" (S-3) | — |
 | EVT-AP-11 | [처리됨] 탭 | — | 인라인갱신 | 목록 | 처리 이력(결과·사유·처리시각·소요시간) | GET /api/approvals?status=resolved |
@@ -476,4 +479,4 @@ $ cm review ap4b2c1d
 | 버전 | 날짜 | 내용 |
 |------|------|------|
 | v1 | 2026-09-01 | 최초 작성 — 진행 보드·승인함 2화면, 승인 게이트 체계 6종, 승인 상태 머신, 검토 패널·안전장치 6종, CLI 3화면, 데이터 모델 5테이블·API 8종 제안, 의사결정 요청 5건, 파급 영향 8건 |
-| **v1.1** | 2026-09-02 | **교차 검증 정정.** §4 진행 보드 목업과 CLI 출력 예시가 **철회된 오진단**("analyze 건너뜀 · ANL-001~004 미작성")을 그대로 담고 있었다(§1-3에서 철회 완료). WIP 위반 예시를 실제 규칙 위반 형태(design·develop 동시 진행)로 교체하고, 산출물 표의 사실과 다른 동기화 상태를 정정했다.<br>CLI 명령을 DES-006 v3 확정본에 맞춤 — `cm skill start` → **`cm stage start <skill>`**, `cm approvals --create-waiver` → **`cm progress --waive`**.<br>**§3-3 승인 상태 머신은 미정정** — `expired` 존재·`conditional` 재전이가 DES-007 v2 §6 확정본과 다르다. 대표 승인 안건으로 상정 (§미해결) |
+| **v1.1** | 2026-09-02 | **교차 검증 정정.** §4 진행 보드 목업과 CLI 출력 예시가 **철회된 오진단**("analyze 건너뜀 · ANL-001~004 미작성")을 그대로 담고 있었다(§1-3에서 철회 완료). WIP 위반 예시를 실제 규칙 위반 형태(design·develop 동시 진행)로 교체하고, 산출물 표의 사실과 다른 동기화 상태를 정정했다.<br>CLI 명령을 DES-006 v3 확정본에 맞춤 — `cm skill start` → **`cm stage start <skill>`**, `cm approvals --create-waiver` → **`cm progress --waive`**.<br>**§3-3 승인 상태 머신을 DES-007 v2 §6 확정본으로 정정**(승인 R-05) — `expired` 제거(6종 → **5종**), `conditional`을 종료 상태로, **조건의 Task 자동 생성을 Phase 1에서 제외**(변환 규칙이 어디에도 없다). Agent 삭제 시 미처리 건은 `rejected` + `resolution='system:agent_deleted'`로 마감(R-04).<br>**§3-2 반려 시 동작 정정**(R-03) — "직전 단계로 되돌아가 보완" → "다음 단계 착수 차단 유지 + 새 `APV-GATE` 발행". 승인은 `stages`를 전이시키지 않는다.<br>**§3-1 낮음 등급 기록 위치 정정**(R-06) — `status_changes` → **`MSG-05`**. `status_changes`는 엔티티 전이 로그라 낮음 결정을 담을 `entity_id`가 없다 |

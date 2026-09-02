@@ -2,7 +2,7 @@
 
 > Phase 1: 기반 구축
 > 문서코드: DES-004
-> 버전: **v2.1 (2026-09-02)** — 교차 검증 정정. 미정의 타입 4종 보완 + 채널 생명주기 시퀀스 2건 보완
+> 버전: **v2.2 (2026-09-02)** — 교차 검증 반영. 부트스트랩 시퀀스 신설 + 승인↔Agent 연동 명시
 > **원본**: [Notion DES-004](https://app.notion.com/p/3c5d066504ec81d08e30df63322e4e98) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -1033,6 +1033,7 @@ sequenceDiagram
     participant S as AgentService
     participant AR as AgentRepo
     participant CS as ConversationService
+    participant AS as ApprovalService
     participant DB as SQLite
 
     CLI->>AC: apiClient.deleteAgent(id)
@@ -1043,15 +1044,19 @@ sequenceDiagram
         AR-->>S: null
         S-->>R: throw AGENT_NOT_FOUND
     else Agent 존재
-        Note over S,DB: 아래 2단계는 하나의 트랜잭션
+        Note over R,DB: Route가 트랜잭션을 열고 두 Service를 조율한다<br>(교차 애그리거트 — DES-001 v3.2 레이어 규칙 9)
+        R->>AS: approvalService.closeByRequester(id)
+        AS->>DB: UPDATE approvals SET status='rejected',<br>resolution='system:agent_deleted',<br>reason=?, resolved_at=?<br>WHERE requested_by=? AND status='pending'
+        Note over DB: 미처리 승인 자동 마감 (R-04)
+        R->>S: agentService.delete(id)
         S->>CS: conversationService.archiveByEntity(id, snapshot)
         CS->>DB: UPDATE conversations SET status='archived',<br>entity_snapshot=?, archived_at=? WHERE entity_id=?
         Note over DB: 대화·메시지는 삭제되지 않는다 (D-27)
         S->>AR: agentRepo.deleteById(id)
         AR->>DB: DELETE FROM agents WHERE id = ?
-        Note over DB: CASCADE: tasks 삭제<br>status_changes 유지 (FK 없음)<br>conversations 유지 (FK 없음)
-        R-->>AC: 200 { data: { archivedConversationId } }
-        CLI->>CLI: 콘솔 "✓ Agent 삭제 완료 (대화 1건 보관됨)"
+        Note over DB: CASCADE: tasks 삭제<br>status_changes 유지 (FK 없음)<br>conversations 유지 (FK 없음)<br>approvals 유지 (requested_by는 FK 아님)
+        R-->>AC: 200 { data: { archivedConversationId, closedApprovalCount } }
+        CLI->>CLI: 콘솔 "✓ Agent 삭제 완료 (대화 1건 보관 · 승인 2건 마감)"
     end
 ```
 
@@ -1067,6 +1072,19 @@ const snapshot: EntitySnapshot = {
 ```
 
 > **순서가 중요하다.** `agents` 행을 먼저 지우면 스냅샷을 만들 수 없다. 아카이브 → 삭제 순서를 반드시 지킨다.
+
+> **⚠ 승인 마감을 `AgentService`가 호출하지 않는 이유 (v2.1 · R-02/R-04)**
+> `ApprovalService → AgentService` 의존이 이미 있다(승인 처리 시 Agent 상태 전이 — DES-001 v3.2). 여기서 `AgentService → ApprovalService`를 추가하면 **양방향 순환**이 되어 R-02가 전제한 무순환이 깨진다.
+> **교차 애그리거트 정리는 Route 핸들러가 트랜잭션 하나로 조율한다.** better-sqlite3는 동기식이라 `db.transaction(fn)`으로 두 Service 호출을 한 트랜잭션에 묶을 수 있다. 승인 마감이 먼저다 — `agents` 행이 사라진 뒤에는 `requested_by`로 대상을 특정하는 것이 의미상 애매해진다.
+
+```typescript
+// agents.routes.ts — DELETE /api/agents/:id
+const result = db.transaction(() => {
+  const closedApprovalCount = approvalService.closeByRequester(id);
+  const { archivedConversationId } = agentService.delete(id);
+  return { archivedConversationId, closedApprovalCount };
+})();
+```
 
 ---
 
@@ -1135,14 +1153,16 @@ sequenceDiagram
     participant MR as MessageRepo
     participant AR as ApprovalRepo
     participant CEO as 대표 (cm decide)
-    participant SS as StageService
+    participant AGS as AgentService
     participant WS as WebSocket Hub
     participant DB as SQLite
 
     Note over AG,DB: [1] 요청 — Agent가 발행
     AG->>AS: approvalService.request(type / level / subject / options / rationale)
     alt level이 low
-        AS-->>AG: 적재하지 않음 (status_changes에만 기록)
+        AS->>MR: insert(MSG-05 / senderRole system / 자율 판단 기록)
+        Note over MR: approvals에 적재하지 않는다 (R-06)<br>승인함은 오염되지 않고 대화에는 남는다
+        AS-->>AG: null 반환 — Agent는 waiting으로 가지 않는다
     else level이 high 또는 medium
         AS->>MR: messageRepo.insert(MSG-04 / senderRole agent)
         MR-->>AS: Message
@@ -1150,7 +1170,8 @@ sequenceDiagram
         Note over AR: high → deadlineAt = null (무기한)<br>medium → now + 30분 (D-10)
         AR->>DB: INSERT INTO approvals …
         AS->>WS: broadcast approval:created
-        AS-->>AG: Agent 상태 → waiting
+        AS->>AGS: agentService.updateStatus(agentId, 'waiting', waitingReason)
+        Note over AGS: high·APV-GATE → 'ceo_approval' (무기한)<br>medium → 'ceo_decision' (30분)
     end
 
     Note over CEO,DB: [2] 응답 — 대표가 처리
@@ -1166,12 +1187,12 @@ sequenceDiagram
         Note over AS,DB: 아래 4단계는 하나의 트랜잭션
         AS->>AR: update(status / resolution / reason / resolvedAt)
         AS->>MR: insert(MSG-01 / senderRole ceo / 결정 내용)
-        opt approved 이고 APV-GATE
-            AS->>SS: stageService.markGatePassed(stageId)
+        alt approved · conditional · auto_advanced
+            AS->>AGS: agentService.updateStatus(agentId, 'running', null)
+        else rejected
+            Note over AGS: Agent는 waiting 유지 — 상태를 건드리지 않는다<br>사유는 위 MSG-01로 전달된다
         end
-        opt rejected
-            AS->>AG: Agent 상태 waiting 유지 + 사유 전달
-        end
+        Note over AS,DB: stages는 바뀌지 않는다 (R-03)<br>게이트 통과 여부는 approvals에서 파생 조회한다
         AS->>WS: broadcast approval:updated
         AS-->>CEO: ApprovalDetail
     end
@@ -1189,7 +1210,7 @@ sequenceDiagram
     participant R as stages.routes
     participant SS as StageService
     participant SR as StageRepo
-    participant AR as ApprovalRepo
+    participant AS as ApprovalService
     participant WR as WipWaiverRepo
     participant DB as SQLite
 
@@ -1201,8 +1222,8 @@ sequenceDiagram
     else 직전 단계가 completed 아님
         SS-->>R: throw INVALID_TRANSITION
     else 게이트 필요 단계
-        SS->>AR: findGateApproval(stageId)
-        Note over AR: WHERE stage_id=? AND<br>approval_type='APV-GATE'<br>ORDER BY created_at DESC LIMIT 1
+        SS->>AS: approvalService.findGateApproval(stageId)
+        Note over AS: WHERE stage_id=? AND<br>approval_type='APV-GATE'<br>ORDER BY created_at DESC LIMIT 1<br>(StageService는 ApprovalRepo를 직접 만지지 않는다)
         alt 승인 없음 또는 approved 아님
             SS-->>R: throw GATE_NOT_PASSED (403)
         end
@@ -1230,28 +1251,35 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant T as ApprovalTimeoutJob<br>(서버 내부 스케줄러)
+    participant AS as ApprovalService
     participant AR as ApprovalRepo
     participant MR as MessageRepo
-    participant AG as Agent
+    participant AGS as AgentService
     participant WS as WebSocket Hub
     participant DB as SQLite
 
     loop 60초 주기
-        T->>AR: findExpired(now)
+        Note over T: 이전 tick이 실행 중이면 건너뛴다 (ADR-012)
+        T->>AS: approvalService.findExpired(now)
+        AS->>AR: findExpired(now)
         AR->>DB: SELECT … WHERE status='pending'<br>AND deadline_at IS NOT NULL<br>AND deadline_at <= ?
         Note over DB: 부분 인덱스<br>approvals_deadline_idx 사용
         loop 만료된 각 건
+            T->>AS: approvalService.autoAdvance(id)
             alt approvalType이 APV-GATE
-                T->>T: 건너뛴다 — 게이트는 자동 진행 불가
+                AS-->>T: throw GATE_AUTO_ADVANCE_FORBIDDEN
+                Note over T: 로깅 후 다음 건으로 — tick을 중단하지 않는다
             else
-                T->>AR: update(status auto_advanced / resolvedAt now)
-                T->>MR: insert(MSG-05 / senderRole system / 타임아웃 자동 진행)
-                T->>AG: Agent 재개
-                T->>WS: broadcast approval:updated
+                AS->>AR: update(status auto_advanced / resolvedAt now)
+                AS->>MR: insert(MSG-05 / senderRole system / 타임아웃 자동 진행)
+                AS->>AGS: agentService.updateStatus(agentId, 'running', null)
+                AS->>WS: broadcast approval:updated
             end
         end
     end
 ```
+
+> **Job은 Repository를 직접 만지지 않는다** (DES-001 §레이어 규칙 7). v2는 `T→ApprovalRepo`로 그려 규칙을 어겼다. 전건 `ApprovalService`를 경유해 등급 검사·`MSG-05` 기록·Agent 재개가 한 곳에서 일어나게 한다 (v2.1 정정).
 
 **핵심 규칙**
 
@@ -1264,6 +1292,60 @@ sequenceDiagram
 
 > **✅ 배치 위치 확정 (DES-001 v3 ADR-012)**: **Fastify 프로세스 내부 `setInterval` 타이머**. 서버 `ready` 훅에서 `start()`, Graceful Shutdown에서 가장 먼저 `stop()`. 별도 워커안은 SQLite 단일 쓰기자 전제와 충돌해 기각되었다.
 > 이전 tick이 끝나지 않았으면 건너뛰고, tick 내부 예외는 로깅 후 삼켜 서버를 죽이지 않는다.
+
+---
+
+## 18. 서버 기동 부트스트랩 (FR-026 · FR-029) — **v2.1 신규 (R-01)**
+
+```mermaid
+sequenceDiagram
+    participant SV as Fastify (ready 훅)
+    participant BS as BootstrapService
+    participant CS as ConversationService
+    participant PS as PhaseService
+    participant T as ApprovalTimeoutJob
+    participant DB as SQLite
+
+    SV->>DB: 마이그레이션 적용 (001~006)
+    SV->>BS: bootstrapService.seed()
+
+    BS->>CS: ensureMainChannel()
+    CS->>DB: INSERT INTO conversations<br>(channel_type='main', entity_id=NULL, status='active')<br>ON CONFLICT DO NOTHING
+    Note over DB: conversations_main_unique(부분 UNIQUE)가<br>전역 1개를 보장 — 재기동해도 안전
+
+    BS->>PS: ensurePhase(1, '기반 구축')
+    PS->>DB: INSERT INTO phases (number=1, …) ON CONFLICT DO NOTHING
+    PS->>DB: INSERT INTO stages (phase_id, skill) × 7<br>ON CONFLICT DO NOTHING
+    Note over DB: UNIQUE(phase_id, skill)가 7행을 보장
+
+    alt 시드 실패
+        BS-->>SV: throw
+        SV->>SV: 로그 출력 후 프로세스 종료 (listen 하지 않는다)
+    else 시드 성공
+        BS-->>SV: { mainChannelId, phaseId }
+        SV->>T: approvalTimeoutJob.start()
+        SV->>SV: listen(127.0.0.1:3000)
+    end
+```
+
+**왜 필요한가**
+
+| 없으면 깨지는 것 | 근거 |
+|-----------------|------|
+| `cm chat main` (SCR-CH01) | CH-MAIN 채널이 없어 대화 자체가 불가 |
+| `cm progress` (SCR-CH06) | `GET /api/phases/current`가 `404 NOT_FOUND` |
+| `cm stage start` (SCR-CH09) | 착수할 `stages` 행이 없어 `STAGE_NOT_FOUND` |
+
+**핵심 규칙**
+
+| 항목 | 값 | 근거 |
+|------|-----|------|
+| 실행 시점 | 마이그레이션 **이후**, 잡 시작·`listen` **이전** | 시드 대상 테이블이 마이그레이션으로 생성된다 |
+| 멱등성 | `ON CONFLICT DO NOTHING` × 3 | 유니크 제약 3종이 이미 존재 (DES-003 v2 §5) |
+| 실패 시 | **기동 중단** | 반쪽으로 도는 서버보다 즉시 드러나는 편이 낫다 |
+| Phase 2 이후 | 시드 대상 아님 — `POST /api/phases` | Phase는 계속 늘어난다 |
+
+> **`BootstrapService`도 Service만 호출한다** (DES-001 §레이어 규칙 7). Repository를 직접 만지면 "CH-MAIN은 전역 1개" · "Phase당 7단계" 같은 비즈니스 규칙을 시드가 우회하게 된다.
 
 ---
 
@@ -1365,6 +1447,7 @@ class ConversationService {
   createForAgent(agentId: string): Promise<Conversation>
   markReadonly(agentId: string): Promise<void>                       // Agent 종료 시
   archiveByEntity(agentId: string, snapshot: EntitySnapshot): Promise<string>  // Agent 삭제 시 (D-27)
+  ensureMainChannel(): Promise<Conversation>                         // 부트스트랩 — 멱등 (v2.1 · R-01)
 }
 
 // approval.service.ts
@@ -1383,6 +1466,10 @@ class ApprovalService {
   findGateApproval(stageId: string): Promise<ApprovalDetail | null>
   findExpired(now: string): Promise<ApprovalSummary[]>   // 스케줄러 전용
   autoAdvance(id: string): Promise<ApprovalDetail>       // 스케줄러 전용. APV-GATE 거부
+
+  // Agent 삭제 시 미처리 승인 자동 마감 → 마감 건수 (v2.1 · R-04)
+  // Route가 트랜잭션 안에서 agentService.delete()보다 먼저 호출한다
+  closeByRequester(requestedBy: string): Promise<number>
 }
 
 // phase.service.ts
@@ -1390,13 +1477,16 @@ class PhaseService {
   getCurrent(): Promise<PhaseCurrent>
   checkWip(phaseId: string): Promise<WipViolation[]>     // 저장하지 않고 계산
   createWaiver(input: CreateWipWaiverInput): Promise<void>
+
+  // Phase 행 + 7단계를 한 트랜잭션으로 생성 (v2.1 · R-01)
+  create(input: { number: number; name: string }): Promise<PhaseCurrent>
+  ensurePhase(number: number, name: string): Promise<string>   // 부트스트랩 — 멱등
 }
 
 // stage.service.ts
 class StageService {
   start(id: string): Promise<StageSummary>               // 게이트 검증 — §16
   complete(id: string): Promise<StageSummary>
-  markGatePassed(stageId: string): Promise<void>
   isGateRequired(skill: SkillName): boolean              // 스킬 전환 모드에서 파생
 }
 
@@ -1414,7 +1504,9 @@ class ArtifactService {
 }
 ```
 
-### Jobs — v2 신규 (`src/backend/jobs/`)
+> **`markGatePassed()`를 제거했다 (v2.1 · R-03).** 쓸 것이 없는 함수였다 — `gate.passed`는 저장하지 않고 `approvals`에서 `stage_id + approval_type='APV-GATE'`로 파생 조회한다(DES-003 v2 §4-3). 승인이 `approved`가 되는 순간 파생값이 자동으로 `true`가 되므로 별도 기록이 필요 없다.
+
+### Jobs · Startup — v2 신규 / v2.1 확장 (`src/backend/jobs/`, `src/backend/bootstrap/`)
 
 ```typescript
 // approval-timeout.job.ts
@@ -1422,6 +1514,12 @@ class ApprovalTimeoutJob {
   start(): void                    // 60초 주기 시작
   stop(): void
   private tick(): Promise<void>    // §17 시퀀스
+}
+
+// bootstrap.service.ts — v2.1 신규 (R-01)
+class BootstrapService {
+  // 서버 ready 훅에서 1회. 멱등 — 재기동해도 안전하다
+  seed(): Promise<{ mainChannelId: string; phaseId: string }>
 }
 ```
 
@@ -1538,3 +1636,4 @@ function getAllowedTransitions(entityType: EntityType, fromStatus: string): stri
 | — | 2026-09-01 | Git 동기화 + 승인 반영 필요 항목 주석 추가 (내용 변경 없음) |
 | **v2** | 2026-09-01 | **승인 반영 개정.** 대화·승인·진행 **타입 27종 추가**(DES-002 v2 §6 JSON Schema 도출의 입력), **시퀀스 4종 신규**(§14 대화 송수신 · §15 의사결정 요청·응답 · §16 승인 게이트 검증 · §17 타임아웃 자동 진행), **§13 Agent 삭제를 D-27 기준으로 개정**(CASCADE → 아카이브, 스냅샷 선기록 순서 명시).<br>Service 5종 · Job 1종 · WebSocketHub 시그니처 추가. 커서 페이지네이션 `limit+1` 판정 규칙 명시. 미해결 4건 등록 |
 | **v2.1** | 2026-09-02 | **교차 검증 정정 — "계약서에 없는 계약" 해소.**<br>**미정의 타입 4종 보완** — `Pagination`·`ListAgentsOpts`·`ListTasksOpts`·`AgentDetail`. 넷 다 v1부터 함수 시그니처에서 **사용만 되고 정의가 없었다.** DES-002 v2 §6-1이 "JSON Schema는 이 문서 타입에서 도출"이라 규정하므로 스키마 생성이 불가능한 상태였다.<br>**채널 생명주기 시퀀스 2건 보완** — §7 Agent 생성 시 `createForAgent()`, §8 Agent 종료 시 `markReadonly()`. v2는 §13(삭제)만 개정해 **두 함수가 어느 시퀀스에서도 호출되지 않았고**, `readonly` 상태에 도달할 경로가 없었다.<br>`fromStatus`를 `null`로 통일(§3 시퀀스와 타입 블록이 `null`/`""`로 갈렸다), `entityType`을 6종으로 확장(DES-003 v2.1 §3-5). **§17·Jobs의 "배치 위치 미정" 주석 정정**(ADR-012로 이미 확정), `APV-GATE` 제외를 **이중 방어**로 정확히 기술 |
+| **v2.2** | 2026-09-02 | **교차 검증 반영 (승인 R-01~R-04·R-06).**<br>**§18 부트스트랩 시퀀스 신설** — 서버 `ready` 훅에서 CH-MAIN·Phase 1·7단계 멱등 시드. 없으면 `cm chat main`·`cm progress`·`cm stage start`가 전부 실패한다(R-01). `BootstrapService`·`ensureMainChannel()`·`PhaseService.create/ensurePhase()` 시그니처 추가.<br>**§15에 `AgentService` 참여자 명시**(R-02) — 승인 발행 시 `waiting`(사유 포함), 승인·조건부·자동진행 시 `running`. 반려는 상태를 건드리지 않는다.<br>**§13 Agent 삭제에 승인 자동 마감 추가**(R-04). `AgentService → ApprovalService`는 **순환**이 되므로 **Route가 `db.transaction()`으로 조율**한다(DES-001 v3.2 레이어 규칙 9). `closeByRequester()` 추가.<br>**§15 low 분기를 `MSG-05` 기록으로 확정**(R-06) — `status_changes`는 엔티티 전이 로그라 low 결정을 담을 `entity_id`가 없다.<br>**§15·§16에서 `stages` 전이 제거**(R-03), 쓸 것이 없던 **`markGatePassed()` 삭제**(`gate.passed`는 파생값이다).<br>**§16·§17 레이어 규칙 위반 정정** — `StageService → ApprovalRepo`, `Job → ApprovalRepo` 직접 호출을 Service 경유로 교정 |

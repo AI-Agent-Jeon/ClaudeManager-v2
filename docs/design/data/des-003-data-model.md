@@ -310,7 +310,7 @@ CHECK (entity_type IN ('project','agent','task','conversation','approval','stage
 | `requested_by` | TEXT | NOT NULL | 요청 주체 (agent id 또는 `main`) |
 | `deadline_at` | TEXT | NULL | 타임아웃 기한 |
 | `status` | TEXT | NOT NULL DEFAULT `pending`, CHECK IN (`pending`,`approved`,`rejected`,`conditional`,`auto_advanced`) | 승인 상태 |
-| `resolution` | TEXT | NULL | 채택한 선택지 코드 |
+| `resolution` | TEXT | NULL | 채택한 선택지 코드. **`system:` 접두어는 시스템 마감을 뜻한다** — `system:agent_deleted`(v2.1 · R-04). 대표 결정과 구분하는 근거다 |
 | `reason` | TEXT | NULL | 사유 |
 | `resolved_at` | TEXT | NULL | 처리 시각 |
 | `created_at` | TEXT | NOT NULL | ISO 8601 |
@@ -333,6 +333,10 @@ CHECK (NOT (approval_type = 'APV-GATE' AND level <> 'high')),
 -- (5) 처리된 건은 처리 시각 필수
 CHECK (status = 'pending' OR resolved_at IS NOT NULL)
 ```
+
+> **Agent 삭제 시 미처리 승인은 `rejected`로 마감된다** (v2.1 · R-04 — DES-007 v2.1 §5-1 4단계 트랜잭션).
+> `resolution='system:agent_deleted'`, `reason='요청 Agent 삭제로 자동 마감'`, `resolved_at=now`로 **CHECK (3)·(5)를 모두 만족**한다. 새 상태(`expired`)를 만들지 않는 이유는 D-11과 같다 — 상태를 늘리면 전이 맵과 모든 가드가 함께 늘어난다.
+> `requested_by`는 FK가 아니므로 Agent 행이 사라져도 승인 이력은 남는다. **마감하지 않으면 아무도 처리할 수 없는 `pending` 건이 승인함에 영구 잔류한다.**
 
 ### 4-2. `phases` — Phase
 
@@ -545,4 +549,4 @@ Phase 2 확장 후보(FR-013 `worktrees`, FR-014 `agent_logs`)는 v1.1 기재를
 | v1.1 | 2026-08-24 | Phase 2+ 확장 고려사항 추가 |
 | — | 2026-09-01 | Git 동기화 + 승인 반영 필요 테이블 11개 정리 + `data-model.md` 참조 누락 지적 |
 | **v2** | 2026-09-01 | **승인 반영 전면 개정.** 테이블 4 → 15개(Phase 1 11개 + Phase 2 예정 4개) + FTS5 가상 테이블 1개.<br>대화 3종(`conversations`·`messages`·`messages_fts`), 승인·진행 5종(`approvals`·`phases`·`stages`·`artifacts`·`wip_waivers`) 컬럼·제약 상세 정의.<br>**비즈니스 규칙 5건을 CHECK 제약으로 강제**(APV-GATE 자동진행 차단 등), **순환 FK 제거**(`stages.gate_approval_id`), **`conversations.entity_id` FK 제거**(D-27 대화 보존), **동기화 상태 파생 규칙**(FR-031), 인덱스 11종 추가, **마이그레이션 전략 신설**(v1 참조 누락 해소). 미해결 5건 등록 |
-| **v2.1** | 2026-09-02 | **교차 검증 정정.** §3-5 신설 — `status_changes.entity_type` CHECK **3종 → 6종**(conversation·approval·stage). v2는 상태 머신을 3 → 6개로 늘리면서 그 전이를 기록할 `entity_type`을 넓히지 않아 **DES-007 v2 §9(모든 전이를 기록)와 DES-009 v3(EntityType 6종)를 만족할 수 없었다**.<br>`from_status` **NULL 허용 명시** — DES-004가 `null`과 `""`로 갈려 있던 것을 `NULL`로 통일(등급 낮음, 자율 판단). 마이그레이션 `006_status_ext` 추가(SQLite CHECK 변경 = 테이블 재작성) |
+| **v2.1** | 2026-09-02 | **교차 검증 정정.** §3-5 신설 — `status_changes.entity_type` CHECK **3종 → 6종**(conversation·approval·stage). v2는 상태 머신을 3 → 6개로 늘리면서 그 전이를 기록할 `entity_type`을 넓히지 않아 **DES-007 v2 §9(모든 전이를 기록)와 DES-009 v3(EntityType 6종)를 만족할 수 없었다**.<br>`from_status` **NULL 허용 명시** — DES-004가 `null`과 `""`로 갈려 있던 것을 `NULL`로 통일(등급 낮음, 자율 판단). 마이그레이션 `006_status_ext` 추가(SQLite CHECK 변경 = 테이블 재작성).<br>**§4-1에 Agent 삭제 시 승인 자동 마감 규약 추가**(승인 R-04) — `resolution='system:agent_deleted'`. 스키마 변경 없이 기존 CHECK (3)(5)를 그대로 만족한다. `resolution`의 `system:` 접두어를 시스템 마감 표식으로 규정 |

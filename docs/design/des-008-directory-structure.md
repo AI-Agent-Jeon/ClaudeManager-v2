@@ -1,7 +1,7 @@
 # DES-008 디렉토리 구조
 
 > Phase 1: 기반 구축
-> 버전: v2.0 (2026-08-24)
+> 버전: **v3.1 (2026-09-02)** — 교차 검증 반영. v3 컴포넌트 17종 파일 배치 + 마이그레이션 경로 정정
 > **원본**: [Notion DES-008](https://app.notion.com/p/3c5d066504ec8173acafd9d2396552fa) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -19,40 +19,72 @@ src/
 │   ├── config.ts                 # 서버 설정 (환경 변수 로드)
 │   ├── plugins/
 │   │   ├── database.ts           # SQLite + Drizzle 연결 플러그인
-│   │   └── auth.ts               # JWT 인증 플러그인 (preHandler)
+│   │   ├── auth.ts               # JWT 인증 플러그인 (preHandler)
+│   │   └── websocket.ts          # @fastify/websocket 업그레이드·수명 관리 (v3)
 │   ├── routes/
 │   │   ├── health.routes.ts      # GET /api/health
 │   │   ├── auth.routes.ts        # POST /api/auth/login
 │   │   ├── projects.routes.ts    # /api/projects/*
-│   │   ├── agents.routes.ts      # /api/agents/*
+│   │   ├── agents.routes.ts      # /api/agents/*  (DELETE는 승인 마감 트랜잭션 조율 — 규칙 9)
 │   │   ├── tasks.routes.ts       # /api/tasks/*
-│   │   └── status-changes.routes.ts  # /api/status-changes
+│   │   ├── status-changes.routes.ts  # /api/status-changes
+│   │   ├── conversations.routes.ts   # /api/conversations/*        (v3)
+│   │   ├── approvals.routes.ts       # /api/approvals/*            (v3)
+│   │   ├── phases.routes.ts          # /api/phases/*, /api/stages/*, /api/wip-waivers  (v3)
+│   │   └── artifacts.routes.ts       # /api/artifacts/*            (v3)
+│   ├── schemas/                  # Fastify JSON Schema (DES-002 §6)  (v3)
+│   │   ├── common.schema.ts      # $id 'common' — uuid·timestamp·error·pagination·cursor
+│   │   └── {resource}.schema.ts  # 라우트별 body·params·querystring·response
 │   ├── services/
 │   │   ├── auth.service.ts       # 인증 비즈니스 로직
 │   │   ├── project.service.ts    # 프로젝트 CRUD + 상태 전이
-│   │   ├── agent.service.ts      # Agent CRUD + 상태 전이
+│   │   ├── agent.service.ts      # Agent CRUD + 상태 전이 + 채널 생명주기
 │   │   ├── task.service.ts       # Task CRUD + 상태 전이
-│   │   └── status-change.service.ts  # 상태 변경 이력 기록/조회
+│   │   ├── status-change.service.ts  # 상태 변경 이력 기록/조회 (횡단 관심사)
+│   │   ├── conversation.service.ts   # 채널 생명주기·메시지·FTS 검색  (v3)
+│   │   ├── approval.service.ts       # 요청 발행·승인 처리·Agent 연동  (v3)
+│   │   ├── phase.service.ts          # Phase 현황·WIP 검사·면제       (v3)
+│   │   ├── stage.service.ts          # 단계 착수 3단 게이트 검증       (v3)
+│   │   └── artifact.service.ts       # 산출물 조회·동기화 상태 파생     (v3)
 │   ├── repositories/
 │   │   ├── project.repository.ts     # 프로젝트 데이터 액세스
 │   │   ├── agent.repository.ts       # Agent 데이터 액세스
 │   │   ├── task.repository.ts        # Task 데이터 액세스
-│   │   └── status-change.repository.ts  # 상태 변경 이력 데이터 액세스
+│   │   ├── status-change.repository.ts  # 상태 변경 이력 데이터 액세스
+│   │   ├── conversation.repository.ts   # 채널 데이터 액세스          (v3)
+│   │   ├── message.repository.ts        # 메시지 CRUD + FTS5 검색     (v3)
+│   │   ├── approval.repository.ts       # 승인 데이터 액세스          (v3)
+│   │   ├── phase.repository.ts          # Phase·단계·면제 데이터 액세스 (v3)
+│   │   └── artifact.repository.ts       # 산출물 데이터 액세스        (v3)
+│   ├── ws/
+│   │   └── hub.ts                # WebSocketHub — 채널별 브로드캐스트, 출력 전용 (v3)
+│   ├── jobs/
+│   │   └── approval-timeout.job.ts   # 60초 주기 만료 승인 자동 진행 (ADR-012)
+│   ├── bootstrap/
+│   │   └── bootstrap.service.ts  # ready 훅 시드 — CH-MAIN·Phase 1·7단계 (R-01)
 │   ├── db/
 │   │   ├── schema.ts             # Drizzle ORM 테이블 스키마
-│   │   ├── index.ts              # DB 연결 인스턴스 생성
-│   │   └── migrations/           # drizzle-kit 생성 마이그레이션 파일
-│   │       └── 0000_initial.sql  # 초기 마이그레이션
+│   │   └── index.ts              # DB 연결 인스턴스 생성
+│   ├── migrations/               # 마이그레이션 (CLAUDE.md 디렉토리 구조)
+│   │   ├── 001_initial.sql       # projects → agents → tasks → status_changes
+│   │   ├── 002_conversations.sql # conversations → messages → messages_fts + 트리거
+│   │   ├── 003_phases.sql        # phases → stages
+│   │   ├── 004_approvals.sql     # approvals (002·003 이후)
+│   │   ├── 005_artifacts.sql     # artifacts → wip_waivers
+│   │   └── 006_status_ext.sql    # status_changes.entity_type 6종 확장
 │   └── utils/
 │       ├── errors.ts             # 커스텀 에러 클래스
-│       └── state-machine.ts      # 상태 전이 검증 (순수 함수)
+│       └── state-machine.ts      # 상태 전이 검증 (순수 함수, 6종)
 ├── cli/
 │   ├── index.ts                  # Commander 진입점
 │   ├── commands/
 │   │   ├── auth.ts               # cm auth login/logout/status
 │   │   ├── project.ts            # cm project create/list/status
 │   │   ├── agent.ts              # cm agent create/list/status
-│   │   └── task.ts               # cm task create/list/status
+│   │   ├── task.ts               # cm task create/list/status
+│   │   ├── chat.ts               # cm chat main/agent/send/list/log/search  (v3)
+│   │   ├── approval.ts           # cm inbox/decide/approvals/review         (v3)
+│   │   └── progress.ts           # cm progress/stage start/artifacts        (v3)
 │   ├── api-client.ts             # HTTP 클라이언트 래퍼 (undici)
 │   └── config.ts                 # CLI 설정 (토큰 저장/로드)
 ├── shared/
@@ -107,6 +139,25 @@ data/                             # SQLite DB 파일 (gitignore)
 | StatusChange Repository | backend/repositories/ | status-change.repository.ts |
 | State Machine | backend/utils/ | state-machine.ts |
 | Health Routes | backend/routes/ | health.routes.ts |
+| **WebSocket Plugin** (v3) | backend/plugins/ | websocket.ts |
+| **Conversation Routes** (v3) | backend/routes/ | conversations.routes.ts |
+| **Conversation Service** (v3) | backend/services/ | conversation.service.ts |
+| **Conversation Repository** (v3) | backend/repositories/ | conversation.repository.ts |
+| **Message Repository** (v3) | backend/repositories/ | message.repository.ts |
+| **Approval Routes** (v3) | backend/routes/ | approvals.routes.ts |
+| **Approval Service** (v3) | backend/services/ | approval.service.ts |
+| **Approval Repository** (v3) | backend/repositories/ | approval.repository.ts |
+| **Phase·Stage Routes** (v3) | backend/routes/ | phases.routes.ts |
+| **Phase Service** (v3) | backend/services/ | phase.service.ts |
+| **Stage Service** (v3) | backend/services/ | stage.service.ts |
+| **Phase·Stage Repository** (v3) | backend/repositories/ | phase.repository.ts |
+| **Artifact Routes** (v3) | backend/routes/ | artifacts.routes.ts |
+| **Artifact Service** (v3) | backend/services/ | artifact.service.ts |
+| **Artifact Repository** (v3) | backend/repositories/ | artifact.repository.ts |
+| **WebSocket Hub** (v3) | backend/ws/ | hub.ts |
+| **ApprovalTimeoutJob** (v3) | backend/jobs/ | approval-timeout.job.ts |
+| **BootstrapService** (v3.1 · R-01) | backend/bootstrap/ | bootstrap.service.ts |
+| **JSON Schema** (v3) | backend/schemas/ | common.schema.ts, {resource}.schema.ts |
 | CLI Entry | cli/ | index.ts |
 | CLI Commands | cli/commands/ | {resource}.ts |
 | API Client | cli/ | api-client.ts |
@@ -114,7 +165,10 @@ data/                             # SQLite DB 파일 (gitignore)
 | Shared Types | shared/ | types.ts, constants.ts |
 | State Transitions | shared/ | state-transitions.ts |
 | Drizzle Schema | backend/db/ | schema.ts |
-| Migrations | backend/db/migrations/ | {number}_{name}.sql |
+| Migrations | **backend/migrations/** | {NNN}_{name}.sql |
+
+> **마이그레이션 경로를 `backend/db/migrations/` → `backend/migrations/`로 정정 (v3.1).**
+> CLAUDE.md §디렉토리 구조가 `src/backend/migrations/`로 규정하고 DES-003 v2 §9-1도 그것을 인용하는데, DES-008 v2.0만 `db/migrations/`로 적혀 있었다. **CLAUDE.md가 기준이다.**
 
 ## 프로젝트 루트 설정 파일
 
@@ -182,6 +236,7 @@ data/
 | 비용/토큰 추적 (FR-016) | `src/backend/services/usage.service.ts`, `.../repositories/usage.repository.ts`, `.../routes/usage.routes.ts`, `src/frontend/components/CostDashboard/` | 2 |
 | 칸반 보드 (FR-017) | `src/frontend/components/KanbanBoard/` (Frontend 전용) | 2 |
 | ~~승인 게이트 (FR-018)~~ | **Phase 1로 편입 완료 (D-16)** — `src/backend/services/approval.service.ts`, `.../repositories/approval.repository.ts`, `.../routes/approvals.routes.ts`는 Phase 1 구조에 포함. `src/frontend/components/ApprovalQueue/`만 Phase 2 | ~~2~~ → **1** |
+| **부트스트랩 (R-01)** | `src/backend/bootstrap/bootstrap.service.ts` — 서버 `ready` 훅 시드. `src/backend/jobs/approval-timeout.job.ts`와 같은 Layer R | **1** |
 | 워크트리 기반 격리 (FR-013) | `src/backend/services/worktree.service.ts`, `.../routes/worktrees.routes.ts`, `.../repositories/worktree.repository.ts` | 3 |
 | 워크플로우 템플릿 (FR-019) | `src/backend/services/template.service.ts`, `.../repositories/template.repository.ts`, `.../routes/templates.routes.ts` | 3 |
 | 공유 메모리 (FR-020) | `src/backend/services/memory.service.ts`, `.../repositories/memory.repository.ts`, `.../routes/memories.routes.ts` | 3 |
@@ -221,3 +276,4 @@ data/
 | v1.1 | 2026-08-24 | Phase 2+ 확장 고려사항 추가 (FR-013~015) |
 | v2.0 | 2026-08-24 | Phase 2~5 전체 디렉토리/파일 확장 반영 (FR-016~025) |
 | — | 2026-09-01 | **Git 동기화** + 승인 반영 필요 항목 주석 추가 (내용 변경 없음) |
+| **v3.1** | 2026-09-02 | **교차 검증 반영 — v3 컴포넌트 17종 파일 배치 누락 해소.** 2026-09-01 개정에서 DES-001이 컴포넌트를 18 → 35종(v3.2 기준 **36종**)으로 늘렸으나 **본 문서는 v2.0 그대로였다.** 파일 배치 계약이 비어 있으면 dev-sub가 임의 위치에 만든다.<br>**디렉토리 4개 신설** — `schemas/`(DES-002 §6-5가 이미 참조하던 경로), `ws/`, `jobs/`, `bootstrap/`. **파일 21개 추가** — Routes 4 · Service 5 · Repository 5 · WS Plugin · WS Hub · Job · Bootstrap · 마이그레이션 6종 · CLI 명령 3종.<br>**마이그레이션 경로 정정** `backend/db/migrations/` → **`backend/migrations/`** — CLAUDE.md §디렉토리 구조 및 DES-003 v2 §9-1과 어긋나 있었다.<br>Component → 디렉토리 매핑 **20행 추가**. Phase 2+ 확장표 FR-018 Phase 2 → 1 · FR-015 Phase 4 → 2, 부트스트랩 행 추가 |

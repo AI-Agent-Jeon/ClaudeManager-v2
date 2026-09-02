@@ -1,7 +1,7 @@
 # DES-002 API 명세서
 
 > Phase 1: 기반 구축
-> 버전: **v2 (2026-09-01)** — 승인 반영 개정. Phase 1 엔드포인트 16 → 31종
+> 버전: **v2.1 (2026-09-02)** — 교차 검증 반영. Phase 1 엔드포인트 31 → 33종 (R-01 · R-07)
 > **원본**: [Notion DES-002](https://app.notion.com/p/3c5d066504ec81958497d54fc5ab9fd3) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -11,11 +11,11 @@
 
 D-09(대화) · D-16(승인 게이트) · D-18(승인 통합) 반영으로 Phase 1 API가 두 배가 되었다.
 
-| 구분 | v1 | **v2** |
-|------|:---:|:---:|
-| Phase 1 엔드포인트 | 16 | **31** |
-| Phase 2 예정 | — | **10** |
-| **총계** | 16 | **41** |
+| 구분 | v1 | v2 | **v2.1** |
+|------|:---:|:---:|:---:|
+| Phase 1 엔드포인트 | 16 | 31 | **33** |
+| Phase 2 예정 | — | 10 | **10** |
+| **총계** | 16 | 41 | **43** |
 
 **v1에서 ❌였던 2건을 이번에 해소한다.**
 
@@ -24,7 +24,8 @@ D-09(대화) · D-16(승인 게이트) · D-18(승인 통합) 반영으로 Phase
 | JSON Schema (Fastify 검증용) | ✅ §6 — 공통 정의 + 도출 규칙 + 예시 |
 | 엔드포인트별 에러 코드 매핑 | ✅ §7 — 31종 전건 매핑 + 신규 코드 9종 |
 
-> **Phase 1 31종의 내역**: 기존 16 + 대화 6(REST 5 + WS 1) + 승인·진행 8 + 전역 WS 1 = 31. PLN-002 v3의 "API 엔드포인트 16 → 31(Phase 1분)"과 일치한다.
+> **Phase 1 33종의 내역**: 기존 16 + 대화 6(REST 5 + WS 1) + 승인·진행 **10** + 전역 WS 1 = **33**.
+> v2.1에서 2종이 늘었다 — `POST /api/phases`(R-01 부트스트랩)와 `POST /api/approvals`(R-07 승인 건 생성). PLN-002 v3의 "16 → 31"은 **33으로 갱신**한다. 증감 +6.5%로 §5 범위 변경 트리거(±20%) 미발동.
 
 ---
 
@@ -117,6 +118,13 @@ Authorization: Bearer <JWT>
 | StatusChange | GET | `/api/status-changes` | 상태 변경 이력 조회 | FR-009 | ✅ |
 
 > **`DELETE /api/agents/:id` 동작 변경 (D-27)**: Agent를 삭제해도 대화는 삭제하지 않는다. 해당 `conversations` 행을 `status='archived'`로 전환하고 `entity_snapshot`을 기록한다. 응답에 `archivedConversationId`를 포함한다. DES-003 v2 §3-1 참조.
+>
+> **미처리 승인 자동 마감 (v2.1 · R-04)**: 같은 트랜잭션에서 이 Agent가 요청한 `pending` 승인을 전건 마감한다 — `status='rejected'`, `resolution='system:agent_deleted'`, `reason='요청 Agent 삭제로 자동 마감'`, `resolved_at=now`. 응답에 `closedApprovalCount`를 포함한다.
+> **마감하지 않으면 승인함에 영구히 남는다** — 승인해도 재개할 Agent가 없다. `resolution` 값으로 대표 반려와 구분된다. 상태를 늘리지 않고 기존 5종으로 처리한다(D-11과 같은 원칙).
+
+```json
+{ "data": { "archivedConversationId": "uuid", "closedApprovalCount": 2 } }
+```
 
 ### 3-2. 대화 (6종) — D-09 · D-27
 
@@ -132,11 +140,13 @@ Authorization: Bearer <JWT>
 > **⚠ DES-013 §6-2의 `/api/decisions` 2종은 채택하지 않는다.**
 > D-18로 `decision_requests`가 `approvals`에 통합되었으므로 엔드포인트도 `/api/approvals`로 일원화한다. `GET /api/decisions?status=pending` → `GET /api/approvals?status=pending`, `POST /api/decisions/:id/resolve` → `POST /api/approvals/:id/resolve`.
 
-### 3-3. 승인·진행 (8종) — D-14 · D-16 · D-18
+### 3-3. 승인·진행 (10종) — D-14 · D-16 · D-18 · **R-01 · R-07**
 
 | 메서드 | 경로 | 설명 | Story | 인증 |
 |--------|------|------|-------|:---:|
 | GET | `/api/phases/current` | 현재 Phase + 7단계 + WIP 검사 | FR-029 | ✅ |
+| **POST** | **`/api/phases`** | **Phase 생성 (7단계 동시 생성)** — v2.1 신규 | **FR-029** | ✅ |
+| **POST** | **`/api/approvals`** | **승인 건 생성 (예외 승인·직접 상정)** — v2.1 신규 | **FR-028** | ✅ |
 | POST | `/api/stages/:id/start` | 단계 착수 (게이트 검증) | FR-030 | ✅ |
 | GET | `/api/artifacts` | 단계별 산출물 + 동기화 상태 | FR-031 | ✅ |
 | GET | `/api/artifacts/:id/content` | 산출물 본문 (검토 패널) | FR-031 | ✅ |
@@ -293,6 +303,38 @@ Authorization: Bearer <JWT>
 - `gate.required`는 CLAUDE.md 스킬 전환 모드에서 파생한다 (`plan→analyze`, `test→deploy`만 `true`)
 - `wipViolations`는 저장하지 않고 **조회 시점에 계산**한다
 
+### `POST /api/phases` — **v2.1 신규 (R-01)**
+
+Phase 행과 **그에 속한 7단계를 한 트랜잭션으로 생성**한다. 단계를 따로 만드는 엔드포인트는 두지 않는다 — `stages`는 `UNIQUE(phase_id, skill)`로 Phase당 정확히 7행이어야 하므로, 개별 생성을 허용하면 6행이나 8행인 Phase가 생길 수 있다.
+
+**요청**
+```json
+{ "number": 2, "name": "웹 대시보드" }
+```
+
+**응답 `201`** — `GET /api/phases/current`와 같은 `PhaseCurrent` 형태. `stages` 7건이 전부 `pending`이다.
+
+| 검증 | 실패 시 |
+|------|--------|
+| `number`가 이미 존재 | `409 VALIDATION_ERROR` (`phases_number_unique`) |
+| `number` < 1 | `400 VALIDATION_ERROR` |
+
+> **Phase 1 행은 이 엔드포인트로 만들지 않는다.** 서버 최초 기동 시 부트스트랩이 멱등 생성한다(아래 §5-1). 이 엔드포인트는 **Phase 2 이후**를 만드는 경로다.
+
+### 5-1. 부트스트랩 — 서버 최초 기동 시 시드 (**v2.1 신규 · R-01**)
+
+**API가 아니라 서버 `ready` 훅의 동작이다.** PLN-001 FR-026 수용 기준이 요구하는 "시스템이 최초 기동될 때 CH-MAIN 채널 1개가 자동 생성되고 삭제할 수 없다"의 구현 지점이며, 이것이 없으면 `cm chat main`·`cm progress`·`cm stage start`가 **빈 DB를 만나 전부 실패한다.**
+
+| 순서 | 대상 | 동작 | 멱등 근거 |
+|:---:|------|------|----------|
+| 1 | `conversations` | `channel_type='main'` 1행 생성 | 부분 유니크 인덱스 `conversations_main_unique` |
+| 2 | `phases` | `number=1` 1행 생성 | `phases_number_unique` |
+| 3 | `stages` | Phase 1의 7단계 `pending` 생성 | `UNIQUE(phase_id, skill)` |
+
+- **전부 `INSERT … ON CONFLICT DO NOTHING`이다.** 매 기동마다 실행해도 안전하다
+- 순서가 중요하다 — `stages.phase_id`가 `phases`를 참조한다
+- 실패하면 **서버를 기동시키지 않는다.** 시드 없이 뜬 서버는 대화도 진행 추적도 못 하므로 조용히 반쪽으로 도는 것보다 낫다
+
 ### `POST /api/stages/:id/start`
 
 요청 본문 없음. **서버가 게이트를 검증한다.**
@@ -304,6 +346,40 @@ Authorization: Bearer <JWT>
 | WIP=1 위반인데 `wip_waivers`에 면제가 없는가 | `409 WIP_VIOLATION` |
 
 > **이것이 FR-030(승인 게이트)의 실제 강제 지점이다.** 화면에서 버튼을 감추는 것만으로는 강제되지 않는다. CLI·API 직접 호출도 막아야 하므로 서버에서 검증한다.
+
+### `POST /api/approvals` — **v2.1 신규 (R-07)**
+
+승인 건을 직접 상정한다. Agent·Main이 내부에서 올리는 경로(`ApprovalService.request()`)와 **같은 서비스 함수를 쓰되 HTTP로도 열어둔다.** DES-014 EVT-PH-5(WIP 경보 [예외 승인])가 이 엔드포인트를 호출한다.
+
+**요청**
+```json
+{
+  "approvalType": "APV-GATE",
+  "level": "high",
+  "subject": "design 단계 WIP 예외 승인",
+  "options": [
+    { "code": "A", "label": "예외 승인", "recommended": true },
+    { "code": "B", "label": "반려" }
+  ],
+  "rationale": "설계 개정과 API 명세를 병행해야 한다",
+  "impact": { "documents": ["DES-002", "DES-003"], "reversible": true },
+  "stageId": "uuid",
+  "conversationId": "uuid"
+}
+```
+
+**응답 `201`** — `ApprovalDetail`. 부수 효과로 해당 채널에 `MSG-04`가 기록되고 `approval:created`가 브로드캐스트된다.
+
+| 검증 | 실패 시 |
+|------|--------|
+| `level='low'` | `400 VALIDATION_ERROR` — `low`는 적재하지 않는다 |
+| `approvalType='APV-GATE'`인데 `level≠'high'` | `422 VALIDATION_ERROR` — 게이트는 등급 하향 불가 (DB CHECK (4)) |
+| `level='high'`인데 `deadlineAt` 지정 | `422 VALIDATION_ERROR` — 높음은 무기한 (DB CHECK (2)) |
+| `conversationId` 채널이 `active`가 아님 | `409 CONVERSATION_ARCHIVED` |
+
+> **`deadlineAt`은 클라이언트가 정하지 않는다.** 서버가 등급에서 파생한다 — `high`면 `null`, `medium`이면 `now + 30분`(D-10). 요청 본문에 실어도 `additionalProperties: false`로 걸린다.
+
+> **CLI 화면은 Phase 1에 추가하지 않는다.** Phase 1의 호출자는 Agent·Main(내부)뿐이고, 대표가 직접 안건을 올리는 화면은 **Phase 2 웹 진행 보드**(EVT-PH-5)다. DES-006 v3의 CLI 32화면은 그대로 유지된다.
 
 ### `GET /api/approvals`
 
@@ -375,9 +451,15 @@ Authorization: Bearer <JWT>
 **부수 효과** (트랜잭션 1건으로 처리)
 1. `approvals` 갱신 (`status`, `resolution`, `reason`, `resolved_at`)
 2. 해당 채널에 `MSG-01` 기록 — 대표 결정을 대화에 남긴다
-3. `approved`이고 `APV-GATE`면 → `stages.status='in_progress'` 전환
-4. `rejected`면 → 요청 Agent를 `waiting` 유지 + `MSG-01`에 사유 기록
+3. `approved`·`conditional`·`auto_advanced`면 → 요청 Agent `waiting` → `running`
+4. `rejected`면 → 요청 Agent를 **`waiting` 유지** + `MSG-01`에 사유 기록
 5. WebSocket `approval:updated` 브로드캐스트
+
+> **`stages`는 이 엔드포인트에서 바뀌지 않는다 (v2.1 정정 · R-03).**
+> v2는 "`approved`이고 `APV-GATE`면 `stages.status='in_progress'` 전환"이라 적었으나, DES-007 v2 §7-1은 **"`POST /api/stages/:id/start`에서만 전이가 일어난다"**고 규정한다. 두 곳에서 같은 전이를 일으키면 3단 게이트 검증(직전 단계 완료 · 게이트 통과 · WIP)을 우회하는 경로가 생긴다.
+> 승인은 **게이트를 열어둘 뿐**이고, 실제 착수는 대표가 `cm stage start`로 한다. 승인 직후 `GET /api/phases/current`의 `gate.passed`가 `true`로 바뀐다.
+>
+> **반려도 `stages`를 바꾸지 않는다.** "직전 단계로 복귀"는 하지 않는다 — 게이트의 효력은 **다음 단계 착수 차단이 유지되는 것**이고, 보완이 끝나면 새 `APV-GATE`를 발행해 다시 승인 사이클을 돈다.
 
 ### `GET /api/artifacts`
 
@@ -571,6 +653,8 @@ const resolveApprovalSchema = {
 | `GET /api/conversations/search` | — |
 | `GET /api/conversations/:id/export` | `CONVERSATION_NOT_FOUND` |
 | `GET /api/phases/current` | `NOT_FOUND` (진행 중 Phase 없음) |
+| `POST /api/phases` | — (`number` 중복은 `VALIDATION_ERROR`) |
+| `POST /api/approvals` | `CONVERSATION_NOT_FOUND`, **`CONVERSATION_ARCHIVED`**, `STAGE_NOT_FOUND` |
 | `POST /api/stages/:id/start` | `STAGE_NOT_FOUND`, **`GATE_NOT_PASSED`**, **`WIP_VIOLATION`**, `INVALID_TRANSITION` |
 | `GET /api/artifacts` | — |
 | `GET /api/artifacts/:id/content` | `NOT_FOUND` |
@@ -622,3 +706,4 @@ Phase 2~3 확장 후보(FR-013 `worktrees`)는 v1.1 기재를 유지한다.
 | v1.1 | 2026-08-24 | Phase 2+ 확장 고려사항 추가 |
 | — | 2026-09-01 | Git 동기화 + 상세 스키마 미작성 지적 + 승인 반영 엔드포인트 25종 정리 |
 | **v2** | 2026-09-01 | **승인 반영 전면 개정.** Phase 1 엔드포인트 16 → 31종(대화 6 · 승인·진행 8 · 전역 WS 1), Phase 2 예정 10종 분리.<br>**v1의 ❌ 2건 해소** — JSON Schema 도출 규칙·공통 정의·예시(§6), 에러 코드 매핑 31종 전건 + **신규 코드 9종**(§7).<br>신규 14종 요청/응답 스키마 상세, **커서 페이지네이션** 도입(메시지 중복 방지), WebSocket 규약 신설, `/api/decisions` 2종 폐기(D-18 통합), `POST /api/stages/:id/start`를 **FR-030 게이트의 실제 강제 지점**으로 명시. 미해결 4건 등록 |
+| **v2.1** | 2026-09-02 | **교차 검증 반영 (승인 R-01·R-03·R-04·R-07).** Phase 1 엔드포인트 **31 → 33** (+6.5%, §5 범위 트리거 미발동).<br>**`POST /api/phases` 신규** — Phase + 7단계 동시 생성. **§5-1 부트스트랩 신설** — 서버 `ready` 훅에서 CH-MAIN·Phase 1·7단계를 멱등 시드. 이 경로가 없어 `cm chat main`·`cm progress`·`cm stage start`가 빈 DB에서 전부 실패하는 상태였다(R-01).<br>**`POST /api/approvals` 신규** — 승인 건 직접 상정. DES-014 EVT-PH-5가 이미 호출하고 있었으나 API 목록에 없었다(R-07). CLI 화면은 Phase 1에 추가하지 않는다(32화면 유지).<br>**`resolve` 부수 효과 정정** — 승인이 `stages`를 직접 전이시키던 것을 제거했다. DES-007 v2 §7-1의 "`stages/:id/start`에서만 전이"와 충돌해 3단 게이트 검증 우회 경로가 되었다. 반려도 단계를 되돌리지 않는다(R-03).<br>**`DELETE /api/agents/:id`에 pending 승인 자동 마감 추가** — `resolution='system:agent_deleted'`. 없으면 승인함에 영구 잔류했다(R-04) |

@@ -186,6 +186,7 @@ const CONVERSATION_TRANSITIONS = {
 
 > **`archived`에서 되돌아가는 전이는 없다.** Agent 행이 이미 삭제되었으므로 되살릴 대상이 없다.
 > **CH-MAIN은 어떤 전이도 하지 않는다.** 전역 단일 채널이고 삭제할 수 없다 (DES-013 §2).
+> **CH-MAIN 생성 지점은 서버 `ready` 훅의 부트스트랩이다** (DES-002 v2.1 §5-1 · R-01). 부분 유니크 인덱스로 멱등이 보장되므로 매 기동마다 실행해도 안전하다.
 
 ### 5-1. ⚠ 애플리케이션이 책임지는 유일한 전이
 
@@ -195,9 +196,16 @@ const CONVERSATION_TRANSITIONS = {
 Agent 삭제 요청
   ├─ 1. 스냅샷 생성   { agentName, projectName, agentType }   ← agents 행이 살아 있을 때
   ├─ 2. conversations UPDATE  status='archived', entity_snapshot, archived_at
-  └─ 3. agents DELETE
-      (1~3은 하나의 트랜잭션)
+  ├─ 3. approvals UPDATE      status='rejected',                    ← v2.1 (R-04)
+  │        resolution='system:agent_deleted',
+  │        reason='요청 Agent 삭제로 자동 마감', resolved_at=now
+  │        WHERE requested_by = <agentId> AND status = 'pending'
+  └─ 4. agents DELETE
+      (1~4는 하나의 트랜잭션)
 ```
+
+> **3단계가 없으면 승인함이 오염된다 (v2.1 · R-04).** 삭제된 Agent가 올린 `pending` 승인은 아무도 처리할 수 없다 — 승인해도 재개할 Agent가 없다. `approvals`는 `requested_by`가 자유 텍스트라 FK로도 정리되지 않는다.
+> 새 상태(`expired`)를 만들지 않고 기존 5종으로 처리한다. D-11이 "상태를 늘리면 전이 맵과 모든 가드가 함께 늘어난다"며 신규 상태를 기각한 것과 같은 원칙이다. 대표 반려와는 `resolution` 값으로 구분한다.
 
 > **순서가 뒤집히면 데이터가 깨진다.** `agents`를 먼저 지우면 스냅샷을 만들 수 없어 **이름 없는 고아 대화**가 남는다. DES-004 v2 §13 참조.
 > 이 전이는 DB 제약으로 막을 수 없으므로 **단위 테스트로 강제한다** — "Agent 삭제 후 대화가 조회되고 이름이 남아 있다".
@@ -244,12 +252,17 @@ const APPROVAL_TRANSITIONS = {
 
 ### 6-2. 후속 동작
 
-| 상태 | Agent | 단계 |
+| 상태 | Agent | 단계(`stages`) |
 |------|-------|------|
-| `approved` | `waiting` → `running` | `APV-GATE`면 다음 단계 `in_progress` |
-| `rejected` | **`waiting` 유지** + 사유를 `MSG-01` 기록 | `APV-GATE`면 직전 단계로 복귀 |
-| `conditional` | `waiting` → `running` | 조건을 `MSG-01` 기록 |
-| `auto_advanced` | `waiting` → `running` | `MSG-05`로 자동 진행 기록 |
+| `approved` | `waiting` → `running` | **바뀌지 않는다.** `APV-GATE`면 게이트만 열린다 (`gate.passed=true`) |
+| `rejected` | **`waiting` 유지** + 사유를 `MSG-01` 기록 | **바뀌지 않는다.** 다음 단계 착수 차단이 유지된다 |
+| `conditional` | `waiting` → `running` | 바뀌지 않는다. 조건을 `MSG-01` 기록 |
+| `auto_advanced` | `waiting` → `running` | 바뀌지 않는다. `MSG-05`로 자동 진행 기록 |
+
+> **승인은 `stages`를 전이시키지 않는다 (v2.1 정정 · R-03).**
+> §7-1이 **"`POST /api/stages/:id/start`에서만 전이가 일어난다"**고 규정한다. 승인 처리에서도 단계를 바꾸면 3단 게이트 검증(직전 단계 완료 · 게이트 통과 · WIP)을 우회하는 두 번째 경로가 생긴다. 승인은 **게이트를 열어둘 뿐**이고 착수는 대표가 `cm stage start`로 한다.
+>
+> **반려는 직전 단계로 복귀시키지 않는다.** 게이트의 효력은 "다음 단계 착수 차단"이며, 반려는 그 차단이 **유지**되는 것으로 충분하다. 완료된 직전 단계를 되돌리면 그 단계의 `artifacts` 상태를 어떻게 다룰지가 새로 열린다(v2 §11 미해결과 같은 문제). 보완이 끝나면 **새 `APV-GATE`를 발행**해 다시 승인 사이클을 돈다.
 
 ---
 
@@ -257,20 +270,24 @@ const APPROVAL_TRANSITIONS = {
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Pending : Phase 생성 시 7단계 일괄 생성
-    Pending --> InProgress : 착수 (게이트 검증 통과)
+    [*] --> Pending : Phase 생성 시 7단계 일괄 생성<br>(POST /api/phases · 부트스트랩)
+    Pending --> InProgress : 착수 (3단 게이트 검증 통과)
     InProgress --> Completed : 완료
-    InProgress --> Pending : 게이트 반려로 복귀
     Completed --> [*]
 ```
 
 ```typescript
+// v2.1 — 선형 3상태. 되돌아가는 전이는 없다 (R-03)
 const STAGE_TRANSITIONS = {
   pending:     ["in_progress"],
-  in_progress: ["completed", "pending"],
+  in_progress: ["completed"],
   completed:   [],
 };
 ```
+
+> **`in_progress → pending`(게이트 반려로 복귀)을 제거했다 (v2.1 · R-03).**
+> 도달할 수 없는 전이였다 — 게이트를 통과하지 못하면 애초에 `in_progress`가 되지 못하므로, "게이트 반려로 `in_progress`에서 `pending`으로 돌아간다"는 상황 자체가 성립하지 않는다.
+> 게이트 반려의 효력은 **대상 단계가 `pending`에 머무는 것**이고, 그것은 전이가 아니라 **전이가 일어나지 않는 것**이다. §6-2 참조.
 
 ### 7-1. 착수 가드 — 3단 검증
 
@@ -309,8 +326,9 @@ CLAUDE.md 스킬 전환 모드에서 파생한다. **저장하지 않는다.**
 | Agent → Paused | 소속 Task → Paused | 실행 중 Task 일괄 일시정지 |
 | **Agent → Completed / Cancelled** | **CH-AGENT → `readonly`** | **v2 신규.** 감사 추적을 위해 삭제하지 않는다 |
 | **Agent 삭제** | **CH-AGENT → `archived`** | **v2 신규.** §5-1 순서 필수 (D-27) |
-| **승인 `approved` (APV-GATE)** | **다음 Stage → `in_progress`** | **v2 신규** |
-| **승인 `rejected` (APV-GATE)** | **직전 Stage → `pending`** | **v2 신규** |
+| **승인 `approved` (APV-GATE)** | **Stage 전이 없음** — 게이트만 열린다 | **v2.1 정정** — 착수는 `stages/:id/start` 전용 (§7-1) |
+| **승인 `rejected` (APV-GATE)** | **Stage 전이 없음** — 대상 단계가 `pending`에 머문다 | **v2.1 정정** — 차단 유지가 반려의 효력 |
+| **Agent 삭제** | **그 Agent의 `pending` 승인 → `rejected`** | **v2.1 신규 (R-04)** — `resolution='system:agent_deleted'` |
 
 ### 8-1. 가드 조건
 
@@ -360,7 +378,8 @@ CLAUDE.md 스킬 전환 모드에서 파생한다. **저장하지 않는다.**
 | 항목 | 내용 | 등급 | 처리 시점 |
 |------|------|:---:|----------|
 | ~~`agents.waiting_reason` 컬럼 부재~~ | ✅ **반영 완료 (2026-09-01)** — DES-003 v2 §3-4에 컬럼 + CHECK 제약 추가 | 보통 | 완료 |
-| **`stages` 복귀 전이 미검증** | §7의 `in_progress → pending`(게이트 반려 복귀)은 산출물이 이미 생성된 상태에서 일어난다. 산출물을 어떻게 다룰지 정의가 없다 | 낮음 | develop |
+| ~~`stages` 복귀 전이 미검증~~ | ✅ **해소 (2026-09-02 · R-03)** — 복귀 전이 자체를 제거했다. 게이트 반려는 대상 단계를 `pending`에 머물게 할 뿐이므로 "이미 생성된 산출물을 어떻게 다룰지"라는 문제가 발생하지 않는다 | 낮음 | 완료 |
+| **부트스트랩 실패 시 기동 정책** | DES-002 v2.1 §5-1은 시드 실패 시 **서버를 기동시키지 않는다**고 규정한다. 재시도·복구 절차는 develop에서 정한다 | 낮음 | develop |
 
 ---
 
@@ -372,4 +391,4 @@ CLAUDE.md 스킬 전환 모드에서 파생한다. **저장하지 않는다.**
 | v1.1 | 2026-08-24 | Phase 2+ 확장 고려사항 추가 |
 | — | 2026-09-01 | Git 동기화 + 승인 반영 필요 항목 주석 추가 (내용 변경 없음) |
 | **v2** | 2026-09-01 | **승인 반영 개정.** 상태 머신 3개 → **6개** — 대화 채널(§5) · 승인(§6) · 단계(§7) 신설.<br>**Agent `waiting`에 `waiting_reason` 3종 도입**(D-11, 신규 상태 미생성), 진입·이탈 규칙 8건 정의. **반려는 `running`으로 복귀하지 않는다**를 명시.<br>**애플리케이션 책임 전이 1건 명시**(§5-1 Agent 삭제 → 대화 아카이브, FK 없음 · 순서 필수 · 단위 테스트로 강제).<br>엔티티 연동 4건 추가, 전이 이벤트 브로드캐스트 규약 신설(§9). 미해결 2건 등록 |
-| **v2.1** | 2026-09-02 | **교차 검증 정정.** §9 브로드캐스트 표에서 **채널 WS의 `approval:created` 제거** — 승인 요청은 `MSG-04`의 `message:new`로 이미 전달되며, 양쪽 발행은 카드 중복 렌더링을 낳는다. DES-002 v2 §4 · DES-004 v2 `ConversationEvent`와 통일 |
+| **v2.1** | 2026-09-02 | **교차 검증 정정 (승인 R-03·R-04).**<br>**§7 단계 상태 머신을 선형 3상태로 단순화** — `in_progress → pending`(게이트 반려 복귀)은 **도달 불가능한 전이**였다. 게이트를 통과 못하면 `in_progress`가 되지 못하므로 그 상황이 성립하지 않는다.<br>**§6-2 후속 동작 정정** — 승인 처리는 `stages`를 전이시키지 않는다. v2는 `approved`에 "다음 단계 `in_progress`", `rejected`에 "직전 단계로 복귀"라 적었으나, §7-1의 **"`stages/:id/start`에서만 전이"**와 충돌해 3단 게이트 검증 우회 경로가 되었다. 승인은 게이트를 열 뿐이고 착수는 별도 명령이다.<br>**§5-1에 pending 승인 자동 마감 추가**(R-04) — Agent 삭제 트랜잭션 3단계. `resolution='system:agent_deleted'`. 없으면 승인함에 영구 잔류했다. §8 연동 규칙 3건 갱신.<br>**§9 채널 WS의 `approval:created` 제거** — `MSG-04`의 `message:new`와 중복 발행이라 카드가 두 번 렌더링된다. DES-002 §4 · DES-004 `ConversationEvent`와 통일.<br>§11 미해결 "`stages` 복귀 전이 미검증" **해소**, 부트스트랩 실패 정책 1건 신규 등록 |
