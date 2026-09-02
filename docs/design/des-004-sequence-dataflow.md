@@ -3,7 +3,7 @@
 > Phase 1: 기반 구축
 > 문서코드: DES-004
 > 버전: **v2.4 (2026-09-02)** — `ConversationService.markRead` 추가, `unreadCount` 파생 근거 명시 (DEV-D-05)
-> **원본**: [Notion DES-004](https://app.notion.com/p/3c5d066504ec81d08e30df63322e4e98) · Git 동기화 2026-09-01
+> **원본**: [Notion DES-004](https://app.notion.com/p/3c5d066504ec81d08e30df63322e4e98) · Git 동기화 2026-09-02
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
 > **📌 이 문서가 develop의 실질적 계약서다.**

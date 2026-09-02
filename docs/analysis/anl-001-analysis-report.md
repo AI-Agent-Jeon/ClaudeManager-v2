@@ -3,7 +3,7 @@
 > Phase 1: 기반 구축
 > 분석 기준 브랜치: main (commit d79f5c5)
 > 작성일: 2026-08-23
-> **원본**: [Notion ANL-001](https://app.notion.com/p/3c5d066504ec8110bd83e514af26842b) · Git 동기화 2026-09-01
+> **원본**: [Notion ANL-001](https://app.notion.com/p/3c5d066504ec8110bd83e514af26842b) · Git 동기화 2026-09-02
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
 ---

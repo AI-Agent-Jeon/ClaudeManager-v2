@@ -2,7 +2,7 @@
 
 > Phase 1: 기반 구축
 > 버전: **v2.4 (2026-09-02)** — `POST /api/stages/:id/complete` 신설 (단계 완료 경로 누락 보완, 대표 결정 A안)
-> **원본**: [Notion DES-002](https://app.notion.com/p/3c5d066504ec81958497d54fc5ab9fd3) · Git 동기화 2026-09-01
+> **원본**: [Notion DES-002](https://app.notion.com/p/3c5d066504ec81958497d54fc5ab9fd3) · Git 동기화 2026-09-02
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
 ---

@@ -4,7 +4,7 @@
 > 문서코드: DES-006
 > 버전: **v3.2 (2026-09-02)** — `cm stage complete` 화면 신설 — 단계 완료 경로 누락 보완 (대표 결정 A안)
 > 대상: **CLI 33개 화면** (기존 19 + 대화·승인·진행 14)
-> **원본**: [Notion DES-006](https://app.notion.com/p/3c5d066504ec8137980bee851fb061a3) · Git 동기화 2026-09-01
+> **원본**: [Notion DES-006](https://app.notion.com/p/3c5d066504ec8137980bee851fb061a3) · Git 동기화 2026-09-02
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
 ## 목적

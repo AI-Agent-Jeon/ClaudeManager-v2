@@ -2,7 +2,7 @@
 
 > Phase 1: 기반 구축
 > 버전: **v2 (2026-09-02)** — 신규 리스크 정식 등록, 사실 오류 2건 정정 (최초 2026-08-23)
-> **원본**: [Notion ANL-003](https://app.notion.com/p/3c5d066504ec816d90c8fd05176696ee) · Git 동기화 2026-09-01
+> **원본**: [Notion ANL-003](https://app.notion.com/p/3c5d066504ec816d90c8fd05176696ee) · Git 동기화 2026-09-02
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
 ---

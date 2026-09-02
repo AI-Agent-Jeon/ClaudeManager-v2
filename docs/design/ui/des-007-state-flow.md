@@ -2,7 +2,7 @@
 
 > Phase 1: 기반 구축
 > 버전: **v2.2 (2026-09-02)** — §7 단계 완료 전이(`InProgress → Completed`)에 트리거·가드 명시 — 플로우 단절 보완 (대표 결정 A안)
-> **원본**: [Notion DES-007](https://app.notion.com/p/3c5d066504ec8174881ad45d1cc9918b) · Git 동기화 2026-09-01
+> **원본**: [Notion DES-007](https://app.notion.com/p/3c5d066504ec8174881ad45d1cc9918b) · Git 동기화 2026-09-02
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
 ---

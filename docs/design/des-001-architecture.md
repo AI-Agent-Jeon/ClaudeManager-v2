@@ -2,7 +2,7 @@
 
 > Phase 1: 기반 구축
 > 버전: **v3.3 (2026-09-02)** — Repository 직접 접근 예외 명문화 (레이어 규칙 10). 컴포넌트 수 변경 없음
-> **원본**: [Notion DES-001](https://app.notion.com/p/3c5d066504ec81b78014c7ccd8cb0723) · Git 동기화 2026-09-01
+> **원본**: [Notion DES-001](https://app.notion.com/p/3c5d066504ec81b78014c7ccd8cb0723) · Git 동기화 2026-09-02
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
 > **✅ 개정 완료 (2026-09-01)**

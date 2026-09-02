@@ -2,7 +2,7 @@
 
 > Phase 1: 기반 구축
 > 버전: **v3 (2026-09-01)** — D-30 결정 반영 (통합 진행 확정)
-> **원본**: [Notion PLN-002](https://app.notion.com/p/3c5d066504ec810d9f8dfdee34fd43f1) · Git 동기화 2026-09-01
+> **원본**: [Notion PLN-002](https://app.notion.com/p/3c5d066504ec810d9f8dfdee34fd43f1) · Git 동기화 2026-09-02
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
 ---
