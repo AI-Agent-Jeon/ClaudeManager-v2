@@ -1,9 +1,11 @@
 # DES-013 대화 인터페이스 설계서
 
 > 문서코드: DES-013
-> 버전: **v2 (2026-09-01)** — 대화 아카이브 화면 추가, 삭제 시 보존 정책 변경
+> 버전: **v2.1 (2026-09-02)** — 교차 검증 정정 (낮음 등급 기록 위치 · CH-MAIN 주소 지정)
 > 범위: 대표 ↔ Main / Agent 대화 채널 · 메시지 체계 · 의사결정 요청 흐름 · **대화 저장·조회** · CLI/웹 대응
 > 레이아웃: DES-012 §6-2, §6-3 참조
+> **원본**: [Notion DES-013](https://app.notion.com/p/3ced066504ec817eb5daf598dd3f78d5) · Git 동기화 2026-09-02
+> 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
 > **대표 승인 필요 — 의사결정 등급 "높음"**
 > 본 문서는 **신규 기능 영역**을 정의한다. 기존 Phase 1 범위(CLI CRUD walking skeleton)와 Phase 2 범위(웹 대시보드)에 모두 포함되지 않은 요구사항이다.
@@ -523,3 +525,4 @@ $ cm decide dq7f8a9b --approve
 |------|------|------|
 | v1 | 2026-09-01 | 최초 작성 — 채널 구조 2종, 메시지 유형 6종, 의사결정 등급별 동작, 웹/CLI 대응, 데이터 모델·API 제안, 파급 영향 9건, 의사결정 요청 5건 |
 | **v2** | 2026-09-01 | **대화 저장·조회 보강.** SCR-W-CV 대화 아카이브 화면 신설(§4-5, 검색·필터·내보내기), Agent 삭제 시 CASCADE 삭제 → **보존**으로 정책 변경(§2, D-27), `conversations.status='archived'` + `entity_snapshot` + `messages_fts` 추가, API 2종·CLI 3화면 추가, 의사결정 D-27·D-28 신설 |
+| **v2.1** | 2026-09-02 | **교차 검증 정정 (승인 R-06).** §3-4 낮음 등급 기록 위치를 `status_changes` → **`MSG-05`**로 정정 — `status_changes`는 엔티티 상태 전이 로그라 자율 판단을 담을 `entity_id`가 없다.<br>**§2에 CH-MAIN 주소 지정 규약 추가** — EVT-CH-1의 `/api/conversations/main/messages` 경로 별칭은 DES-002 §6-3의 `format: 'uuid'` 검증에 걸린다. `?type=main`으로 id를 얻은 뒤 UUID로 접근한다(CLI와 통일).<br>**§3 이중 기록 보완** — 헤더에 Notion 원본 URL이 없었다. 추가 완료 |
