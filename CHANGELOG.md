@@ -188,6 +188,43 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   소관, `cm review`/`cm decide`는 그룹 C 범위) 카드는 `body`·`approvalId`로만 구성했다 — §3-1 "응답 필드에
   없는 것을 화면에 만들지 않는다" 원칙을 따른 결과이자 알려진 축소 범위(미해결 사항 참조)
 
+**CLI (Layer 3-2 그룹 C)** — `cm inbox/decide/approvals/review` 승인 4개 명령
+- `src/cli/commands/approval.ts`(DES-008 배치 계약 — 4화면을 파일 하나에) — 4개 명령은 DES-006 화면
+  인벤토리에서 전부 **최상위 명령**이다(`chat`·`project`처럼 하위 명령을 묶는 부모가 아니다). 그룹 A·B가
+  세운 관용구(판정 로직은 콘솔에 쓰지 않고 판별 유니온만 반환, `present*`가 §8 출력 형식으로 변환)를
+  그대로 따른다
+- `resolveApprovalId()` — `GET /api/approvals`가 `project`·`agent`·`task`와 달리 `pagination` 객체를
+  안 돌려줘(배열만) `runtime.ts`의 `resolveId()`(페이지네이션 요구)를 못 쓴다. `chat.ts`의
+  `resolveConversationId()`와 같은 이유로 이 파일 전용 해석 함수를 둔다
+- `cm review <id>`(SCR-CH08) — 이 그룹의 핵심. `GET /api/approvals/:id`가 돌려주는 `options`·
+  `artifacts`·`rationale`·`impact` **4개를 전부 출력**한다(DES-002 §5 "이 4개가 없으면 대표는
+  '모르는 채 누르는' 상태가 된다"). 산출물은 코드·제목·Git 경로·Notion URL·**동기화 상태**까지 표시하고,
+  `notion_only`가 하나라도 있으면 "Git 동기화 누락 n건 — 프로세스 위반이 아닙니다" 경고블록을 붙인다
+  (EVT-CH08-2, `notion_only`와 `missing`의 혼동이 2026-09-01 "analyze 건너뜀" 오진단의 원인이었다).
+  `stageId`(UUID)만 있고 스킬명이 없어 `GET /api/phases/current`로 한 번 더 찾는다(`findStageSkill`,
+  부가 정보 조회 실패는 본 결과를 무효화하지 않는 조용한 실패 원칙 — `project.ts`의
+  `fetchProjectDetailQuietly`와 같다)
+- `cm decide <id> --approve|--reject [--resolution <code>] [--reason <reason>]`(SCR-CH05) —
+  **반려는 사유가 없으면 서버를 부르지 않고 CLI가 먼저 막는다**(안전장치 S-2, 왕복을 줄인다). 서버가
+  그래도 `APPROVAL_REASON_REQUIRED`를 돌려주는 경로도 별도로 매핑한다. `resolution`은 `VALIDATION_ERROR`로
+  옵션에 없는 코드를 거른다. 이미 처리된 건(`APPROVAL_ALREADY_RESOLVED`, 409)이면 상세를 한 번 더 조회해
+  "기존 결정·처리시각"을 보여준다(EVT-CH05-4). **결정 후 안내** — 승인/조건부는 "Agent가 재개됩니다", 반려는
+  "Agent는 대기 상태를 유지합니다"(EVT-CH05-2). `APV-GATE`가 승인되면 `stageId`로 다음 단계 스킬명을 찾아
+  "다음 단계: `<skill>`" + `cm stage start <skill>` 안내를 덧붙인다(승인은 게이트만 열 뿐 착수는 별도
+  명령이라는 R-03을 반영). `decision`은 타입 수준에서 `'approve'|'reject'` 둘뿐이라 `auto_advanced`를 보낼
+  방법이 없다(개발 지시 §2(2))
+- `cm inbox`(SCR-CH04) — `GET /api/approvals?status=pending`. 서버가 계산한 `elapsedSeconds`·
+  `remainingSeconds`를 그대로 받아 "N시간 M분 경과"/"무기한"으로 사람이 읽는 형태로만 변환한다(CLI에서
+  다시 계산하지 않는다). 높음 등급이 하나라도 있으면 "무기한 대기 — 대표 처리 전까지 Agent가 멈춰
+  있습니다" 경고블록(EVT-CH04-3)
+- `cm approvals [--pending|--resolved]`(SCR-CH07) — `status` enum엔 "resolved" 값이 없어(pending/
+  approved/rejected/conditional/auto_advanced 5종뿐), `--resolved`는 서버 필터가 아니라 전건을 받아
+  클라이언트에서 `status !== 'pending'`만 남긴다
+- `cm decide`의 지원 범위 — 개발 지시 §1 명령 표가 규정한 `--approve|--reject`만 지원한다.
+  `EVT-CH05-5`(플래그 없이 호출 시 `PRM-CH01` 대화형 프롬프트)는 §5 프롬프트 명세 표(PRM-01~03)에
+  행이 없어 입력 형식·기본값·응답별 결과가 정의되지 않은 명세 공백이라 구현하지 않았다 — 플래그 없이
+  호출하면 사용법을 안내하고 exit 1(미해결 사항 참조). `conditional`도 명령 표에 없어 지원하지 않는다
+
 ### Changed
 
 - **`GATE_REQUIRED_SKILLS`를 단일 원본으로 승격** — `phase.service.ts`의 모듈 지역 상수였던 것을
@@ -246,9 +283,21 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 ### 미반영 (Phase 1 잔여)
 
 - WebSocket 엔드포인트 (`WS /ws`, `WS /ws/conversations/:id`) — Hub만 구현됨. `approval:created`·`approval:updated` 브로드캐스트 호출은 있으나 실제 소켓 라우트 배선은 다음 계층. `cm chat main/agent`도 이 때문에 REPL 안에서 실시간 수신을 하지 않는다(전송 + 확인까지만, 개발 지시 §2(1))
-- CLI 명령 그룹 — `cm inbox`·`cm decide`·`cm approvals`·`cm review`·`cm progress`·`cm stage`·`cm artifacts`
-  (`cm auth`는 Layer 3-1, `cm project`·`cm agent`·`cm task`·`cm status-changes`는 그룹 A, `cm chat`은
-  그룹 B에서 구현됨. 그룹 C·D 잔여)
+- CLI 명령 그룹 — `cm progress`·`cm stage`·`cm artifacts` (`cm auth`는 Layer 3-1, `cm project`·`cm agent`·
+  `cm task`·`cm status-changes`는 그룹 A, `cm chat`은 그룹 B, `cm inbox`·`cm decide`·`cm approvals`·
+  `cm review`는 그룹 C에서 구현됨. 그룹 D 잔여)
+- `cm decide <id>`를 플래그 없이 호출했을 때의 `PRM-CH01` 대화형 프롬프트(EVT-CH05-5, "안건 요약 +
+  선택지 + [승인/반려/취소]") — DES-006 §5 프롬프트 명세 표에 PRM-CH01 행이 없어 입력 형식·기본값·
+  응답별 결과가 정의되지 않은 명세 공백이다. 현재는 플래그 없이 호출하면 두 플래그 사용법을 안내하고
+  exit 1로 종료한다(그룹 C). `conditional` 상태도 명령 표(개발 지시 §1)에 없어 `cm decide`가 지원하지
+  않는다 — 필요하면 명세 보완 후 별도 스킬 회귀로 추가한다
+- `cm approvals`(SCR-CH07)의 필드는 DES-006 §3-1이 실제로 정의한 목록(ID·유형·등급·안건·상태·요청자·
+  경과/잔여)만 출력한다. §4-4 `EVT-CH07-2`는 `--resolved`에 "결정·사유·처리시각"까지 요구하지만
+  `GET /api/approvals`(목록) 응답은 `ApprovalSummary`라 `resolution`·`reason`·`resolvedAt`이 없다(그
+  3필드는 `ApprovalDetail`, 즉 `GET /api/approvals/:id` 전용이다) — 목록 화면에서 건별 상세를 추가
+  조회하면 N+1이 되어 하지 않았다. "상태" 컬럼(approved/rejected 등)이 "결정"은 대신 보여주지만
+  "사유"·"처리시각"은 `cm review <id>`로 따로 봐야 한다(§3-1 "응답 필드에 없는 것을 화면에 만들지
+  않는다" 원칙을 목록 API 응답을 원본으로 우선했다 — 명세 불일치, 대표 결정 필요)
 - **`ConversationService.markRead()`를 호출하는 HTTP 경로가 없다** — `conversations.routes.ts`의 REST
   5종(목록·메시지 조회·전송·검색·내보내기) 중 읽음 포인터를 갱신하는 라우트가 없다(DES-004 §전체 함수
   시그니처 요약엔 `markRead(id): Promise<Conversation>`가 있지만 어느 라우트에서도 부르지 않는다). `cm chat

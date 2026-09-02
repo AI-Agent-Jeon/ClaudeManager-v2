@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { registerAgentCommand } from './commands/agent.js';
+import { registerApprovalCommand } from './commands/approval.js';
 import { registerAuthCommand } from './commands/auth.js';
 import { registerChatCommand } from './commands/chat.js';
 import { registerProjectCommand } from './commands/project.js';
@@ -17,9 +18,10 @@ import { registerTaskCommand } from './commands/task.js';
  *
  * Layer 3-1은 `cm auth login/logout/status`만 붙였다. Layer 3-2 그룹 A가
  * `project`·`agent`·`task`·`status-changes`(SCR-P01~SC01, 기본 CRUD 14개
- * 명령)를, 그룹 B가 `chat`(SCR-CH01~03·11~13, 대화 6개 명령)을 이어 붙였다.
- * `inbox`·`decide`·`approvals`·`review`·`progress`·`stage`·`artifacts`
- * (그룹 C·D)는 여전히 자리만 비워 둔다 — 동작하지 않는 명령이 `--help`에
+ * 명령)를, 그룹 B가 `chat`(SCR-CH01~03·11~13, 대화 6개 명령)을, 그룹 C가
+ * `inbox`·`decide`·`approvals`·`review`(SCR-CH04·05·07·08, 승인 4개 명령 —
+ * 전부 최상위 명령이다)를 이어 붙였다. `progress`·`stage`·`artifacts`
+ * (그룹 D)는 여전히 자리만 비워 둔다 — 동작하지 않는 명령이 `--help`에
  * 나타나면 대표가 실행해보고서야 미구현임을 알게 된다.
  */
 
@@ -49,8 +51,8 @@ export function buildProgram(): Command {
   registerTaskCommand(program);
   registerStatusChangeCommand(program);
   registerChatCommand(program);
-  // 그룹 C·D에서 여기에 이어 붙인다:
-  // registerApprovalCommand(program) · registerProgressCommand(program)
+  registerApprovalCommand(program);
+  // 그룹 D에서 여기에 이어 붙인다: registerProgressCommand(program)
 
   return program;
 }
