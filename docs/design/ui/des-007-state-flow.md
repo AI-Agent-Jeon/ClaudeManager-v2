@@ -1,7 +1,7 @@
 # DES-007 상태 흐름도
 
 > Phase 1: 기반 구축
-> 버전: **v2.1 (2026-09-02)** — 교차 검증 정정. §9 브로드캐스트 규약 통일
+> 버전: **v2.2 (2026-09-02)** — §7 단계 완료 전이(`InProgress → Completed`)에 트리거·가드 명시 — 플로우 단절 보완 (대표 결정 A안)
 > **원본**: [Notion DES-007](https://app.notion.com/p/3c5d066504ec8174881ad45d1cc9918b) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -271,8 +271,8 @@ const APPROVAL_TRANSITIONS = {
 ```mermaid
 stateDiagram-v2
     [*] --> Pending : Phase 생성 시 7단계 일괄 생성<br>(POST /api/phases · 부트스트랩)
-    Pending --> InProgress : 착수 (3단 게이트 검증 통과)
-    InProgress --> Completed : 완료
+    Pending --> InProgress : 착수 (3단 게이트 검증 통과)<br>POST /api/stages/:id/start
+    InProgress --> Completed : 완료 (선행 조건 없음)<br>POST /api/stages/:id/complete
     Completed --> [*]
 ```
 
@@ -291,13 +291,25 @@ const STAGE_TRANSITIONS = {
 
 ### 7-1. 착수 가드 — 3단 검증
 
-`POST /api/stages/:id/start`에서만 전이가 일어난다. **여기가 CLAUDE.md 스킬 전환 게이트의 유일한 강제 지점이다.**
+`Pending → InProgress` 전이는 `POST /api/stages/:id/start`**에서만** 일어난다. **게이트 검증(3단 가드)도 이 엔드포인트 한 곳에서만 수행된다 — 이것이 CLAUDE.md 스킬 전환 게이트의 유일한 강제 지점이다.**
 
 | 순서 | 가드 | 위반 시 |
 |:---:|------|--------|
 | 1 | 직전 단계가 `completed`인가 | `422 INVALID_TRANSITION` |
 | 2 | 게이트 필요 단계면 `APV-GATE`가 `approved`인가 | `403 GATE_NOT_PASSED` |
 | 3 | WIP=1 위반인데 면제(`wip_waivers`)가 없는가 | `409 WIP_VIOLATION` |
+
+### 7-1a. 완료 가드 — 선행 조건 없음 (**v2.2 신규 · 대표 결정 A안**)
+
+`InProgress → Completed` 전이는 `POST /api/stages/:id/complete`가 담당한다. 가드는 상태 검사 하나뿐이다.
+
+| 가드 | 위반 시 |
+|------|--------|
+| 대상 단계가 존재하는가 | `404 STAGE_NOT_FOUND` |
+| 대상 단계가 `in_progress`인가 (`pending`·`completed`는 거부) | `422 INVALID_TRANSITION` |
+
+> **게이트 검증(승인·WIP)을 여기에 걸지 않는다.** 산출물이 충분한지는 대표가 판단할 일이지 서버가 강제할 규칙이 아니다. 여기에 검사를 추가하면 §7-1의 "게이트 강제 지점은 `start` 한 곳뿐이다"가 두 곳으로 갈라진다 — R-03이 정리한 원칙과 정면으로 충돌한다.
+> `phases.current_stage`도 이 엔드포인트가 바꾸지 않는다. 다음 단계 착수는 여전히 `POST /api/stages/:id/start`가 전담하며, 그 가드 1("직전 단계가 `completed`인가")이 이 엔드포인트로 완료 처리된 상태를 읽는다.
 
 ### 7-2. 게이트 필요 단계
 
@@ -392,3 +404,4 @@ CLAUDE.md 스킬 전환 모드에서 파생한다. **저장하지 않는다.**
 | — | 2026-09-01 | Git 동기화 + 승인 반영 필요 항목 주석 추가 (내용 변경 없음) |
 | **v2** | 2026-09-01 | **승인 반영 개정.** 상태 머신 3개 → **6개** — 대화 채널(§5) · 승인(§6) · 단계(§7) 신설.<br>**Agent `waiting`에 `waiting_reason` 3종 도입**(D-11, 신규 상태 미생성), 진입·이탈 규칙 8건 정의. **반려는 `running`으로 복귀하지 않는다**를 명시.<br>**애플리케이션 책임 전이 1건 명시**(§5-1 Agent 삭제 → 대화 아카이브, FK 없음 · 순서 필수 · 단위 테스트로 강제).<br>엔티티 연동 4건 추가, 전이 이벤트 브로드캐스트 규약 신설(§9). 미해결 2건 등록 |
 | **v2.1** | 2026-09-02 | **교차 검증 정정 (승인 R-03·R-04).**<br>**§7 단계 상태 머신을 선형 3상태로 단순화** — `in_progress → pending`(게이트 반려 복귀)은 **도달 불가능한 전이**였다. 게이트를 통과 못하면 `in_progress`가 되지 못하므로 그 상황이 성립하지 않는다.<br>**§6-2 후속 동작 정정** — 승인 처리는 `stages`를 전이시키지 않는다. v2는 `approved`에 "다음 단계 `in_progress`", `rejected`에 "직전 단계로 복귀"라 적었으나, §7-1의 **"`stages/:id/start`에서만 전이"**와 충돌해 3단 게이트 검증 우회 경로가 되었다. 승인은 게이트를 열 뿐이고 착수는 별도 명령이다.<br>**§5-1에 pending 승인 자동 마감 추가**(R-04) — Agent 삭제 트랜잭션 3단계. `resolution='system:agent_deleted'`. 없으면 승인함에 영구 잔류했다. §8 연동 규칙 3건 갱신.<br>**§9 채널 WS의 `approval:created` 제거** — `MSG-04`의 `message:new`와 중복 발행이라 카드가 두 번 렌더링된다. DES-002 §4 · DES-004 `ConversationEvent`와 통일.<br>§11 미해결 "`stages` 복귀 전이 미검증" **해소**, 부트스트랩 실패 정책 1건 신규 등록 |
+| **v2.2** | 2026-09-02 | **`InProgress → Completed` 전이에 트리거·가드 명시 (대표 결정 A안) — 플로우 단절 보완.** v2.1은 이 전이를 다이어그램에 화살표만 그려두고(`완료`) 어떤 API가 호출하는지, 어떤 가드를 거치는지 적지 않았다. `Pending → InProgress`에는 "착수 (3단 게이트 검증 통과)"가 붙어 있던 것과 비대칭이었다.<br>**mermaid 다이어그램에 `POST /api/stages/:id/complete` 명시**. **§7-1a 신설** — 완료 가드는 상태 검사(대상 존재·`in_progress` 여부) 하나뿐이며, 게이트·WIP 검증은 걸지 않는다(선행 조건 없음). 산출물 충분성은 대표 판단 영역이라는 근거를 명시.<br>**§7-1 문구 정정** — "`POST /api/stages/:id/start`에서만 전이가 일어난다"를 "`Pending → InProgress` 전이는 `start`에서만 일어난다"로 좁혀, `complete`가 담당하는 `InProgress → Completed` 전이와 모순되지 않게 했다. **"게이트 검증은 `start` 한 곳에서만"이라는 R-03의 취지는 그대로 유지**된다 — `complete`에는 게이트 검증 자체가 없기 때문이다.<br>DES-002 v2.4 `POST /api/stages/:id/complete` 신규 반영 |
