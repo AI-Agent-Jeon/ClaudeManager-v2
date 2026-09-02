@@ -149,3 +149,86 @@ export function seedStages(db: Database.Database, phaseId: string): Record<strin
   }
   return ids;
 }
+
+export interface SeedApprovalOverrides {
+  id?: string;
+  messageId?: string | null;
+  stageId?: string | null;
+  approvalType?: string;
+  level?: string;
+  subject?: string;
+  options?: string | null;
+  artifacts?: string | null;
+  rationale?: string | null;
+  impact?: string | null;
+  requestedBy?: string;
+  deadlineAt?: string | null;
+  status?: string;
+  resolution?: string | null;
+  reason?: string | null;
+  resolvedAt?: string | null;
+  createdAt?: string;
+}
+
+/** level='high'일 때 deadlineAt 기본값(무기한 null)을 계산한다 — DES-003 §4-1 CHECK (2) */
+function defaultDeadlineAt(level: string): string | null {
+  return level === 'high' ? null : isoNow();
+}
+
+/** overrides가 명시하지 않은 필드의 기본값. id·level에 의존하는 파생값만 인자로 받는다 */
+function seedApprovalDefaults(
+  id: string,
+  level: string,
+): Required<Omit<SeedApprovalOverrides, 'id'>> {
+  return {
+    messageId: null,
+    stageId: null,
+    approvalType: 'APV-CHOICE',
+    level,
+    subject: `안건-${id.slice(0, 8)}`,
+    options: JSON.stringify([{ code: 'A', label: '승인' }]),
+    artifacts: null,
+    rationale: null,
+    impact: null,
+    requestedBy: 'main',
+    deadlineAt: defaultDeadlineAt(level),
+    status: 'pending',
+    resolution: null,
+    reason: null,
+    resolvedAt: null,
+    createdAt: isoNow(),
+  };
+}
+
+/** approvals — DES-003 v2.1 §4-1 */
+export function seedApproval(db: Database.Database, overrides: SeedApprovalOverrides = {}): string {
+  const id = overrides.id ?? crypto.randomUUID();
+  const level = overrides.level ?? 'high';
+  const row = { id, ...seedApprovalDefaults(id, level), ...overrides };
+
+  db.prepare(
+    `INSERT INTO approvals (id, message_id, stage_id, approval_type, level, subject, options,
+       artifacts, rationale, impact, requested_by, deadline_at, status, resolution, reason,
+       resolved_at, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  ).run(
+    row.id,
+    row.messageId,
+    row.stageId,
+    row.approvalType,
+    row.level,
+    row.subject,
+    row.options,
+    row.artifacts,
+    row.rationale,
+    row.impact,
+    row.requestedBy,
+    row.deadlineAt,
+    row.status,
+    row.resolution,
+    row.reason,
+    row.resolvedAt,
+    row.createdAt,
+  );
+  return id;
+}

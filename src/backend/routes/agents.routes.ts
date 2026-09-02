@@ -7,6 +7,7 @@ import type {
   DeleteAgentResult,
 } from '../../shared/types.js';
 import { AgentRepository } from '../repositories/agent.repository.js';
+import { ApprovalRepository } from '../repositories/approval.repository.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
 import { MessageRepository } from '../repositories/message.repository.js';
 import { ProjectRepository } from '../repositories/project.repository.js';
@@ -14,6 +15,7 @@ import { StatusChangeRepository } from '../repositories/status-change.repository
 import { TaskRepository } from '../repositories/task.repository.js';
 import { paginationQuery } from '../schemas/common.schema.js';
 import { AgentService } from '../services/agent.service.js';
+import { ApprovalService } from '../services/approval.service.js';
 import { ConversationService } from '../services/conversation.service.js';
 
 /**
@@ -42,20 +44,36 @@ interface StatusBody {
 }
 
 export function registerAgentRoutes(app: FastifyInstance): void {
+  const agentRepo = new AgentRepository(app.db);
+  const conversationRepo = new ConversationRepository(app.db);
+  const messageRepo = new MessageRepository(app.db);
+  const statusChangeRepo = new StatusChangeRepository(app.db);
+
   // AgentService → ConversationService는 "허용된 Service 간 의존 4건"이다
   // (src/CLAUDE.md §레이어 규칙: Stage → Approval → Agent → Conversation).
-  const conversationService = new ConversationService(
-    new ConversationRepository(app.db),
-    new MessageRepository(app.db),
-  );
+  const conversationService = new ConversationService(conversationRepo, messageRepo);
   const service = new AgentService(
     app.db,
-    new AgentRepository(app.db),
-    new StatusChangeRepository(app.db),
+    agentRepo,
+    statusChangeRepo,
     new ProjectRepository(app.db),
     new TaskRepository(app.db),
     conversationService,
-    new ConversationRepository(app.db),
+    conversationRepo,
+  );
+
+  // ApprovalService → AgentService는 "허용된 Service 간 의존 4건"이다 (v3.2 · R-02).
+  // DELETE 핸들러(R-04)가 이 인스턴스로 승인 마감을 조율한다 — 같은 app.db
+  // 커넥션을 쓰는 같은 프로세스 안이라 트랜잭션 경계를 공유할 수 있다.
+  const approvalService = new ApprovalService(
+    app.db,
+    new ApprovalRepository(app.db),
+    statusChangeRepo,
+    messageRepo,
+    conversationRepo,
+    agentRepo,
+    service,
+    app.hub,
   );
 
   app.post<{ Body: CreateAgentInput }>(
@@ -174,9 +192,32 @@ export function registerAgentRoutes(app: FastifyInstance): void {
         },
       },
     },
+    // R-04 — 승인 마감(ApprovalService.closeByRequester)과 Agent 삭제
+    // (AgentService.delete)를 한 트랜잭션으로 조율한다. `ApprovalService →
+    // AgentService`(기존)와 `AgentService → ApprovalService`를 둘 다 두면
+    // 양방향 순환이 되므로, Service끼리 부르지 않고 Route가 db.transaction()
+    // 으로 순서를 강제한다 (DES-004 §13 · 레이어 규칙 9).
     async (request): Promise<{ data: DeleteAgentResult }> => {
-      const result = await service.delete(request.params.id);
-      return { data: result };
+      const id = request.params.id;
+
+      // better-sqlite3의 db.transaction()은 동기 콜백만 지원해, 안에서는 async
+      // 서비스 메서드의 Promise 반환값을 꺼낼 수 없다(내부에 실제 await가 없어도
+      // async 함수는 항상 Promise를 반환한다). 응답 구성에 필요한 값은 실제
+      // 쓰기 직전 상태에서 미리 확보한다 — getById가 AGENT_NOT_FOUND도 검증한다.
+      const before = await service.getById(id);
+      const closedApprovalCount = await approvalService.countPendingByRequester(id);
+
+      // 실제 원자적 쓰기 — 두 메서드 모두 내부에 실제 await 지점이 없어(각
+      // 서비스 파일 주석 참조) fire-and-forget으로 호출해도 트랜잭션 콜백이
+      // 반환되기 전에 DB 쓰기가 동기적으로 완결된다.
+      app.db.transaction(() => {
+        void approvalService.closeByRequester(id);
+        void service.delete(id);
+      })();
+
+      return {
+        data: { archivedConversationId: before.conversationId, closedApprovalCount },
+      };
     },
   );
 }

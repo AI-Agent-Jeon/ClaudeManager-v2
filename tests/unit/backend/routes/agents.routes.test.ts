@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../../../../src/backend/app.js';
+import { seedApproval } from '../../../fixtures/test-db.js';
 
 /**
  * FR-007 — agents.routes
@@ -300,5 +301,39 @@ describe('DELETE /api/agents/:id — FR-007 (D-27)', () => {
     });
     expect(res.statusCode).toBe(404);
     expect(res.json().code).toBe('AGENT_NOT_FOUND');
+  });
+
+  it('요청 Agent의 pending 승인이 있으면 closedApprovalCount가 실제 마감 건수를 반환한다 (R-04)', async () => {
+    const project = await createProject('R-04 프로젝트');
+    const created = (await createAgent(project.id, 'R-04 에이전트')).json().data;
+
+    seedApproval(app.db, { requestedBy: created.id, status: 'pending' });
+    seedApproval(app.db, { requestedBy: created.id, status: 'pending' });
+    // 다른 요청자 건은 건드리지 않는다
+    const otherId = seedApproval(app.db, { requestedBy: 'main', status: 'pending' });
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/agents/${created.id}`,
+      headers: authHeader(),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.closedApprovalCount).toBe(2);
+
+    const approvalsRes = await app.inject({
+      method: 'GET',
+      url: '/api/approvals?status=rejected',
+      headers: authHeader(),
+    });
+    const rejected = approvalsRes.json().data as { id: string; requestedBy: string }[];
+    expect(rejected.filter((a) => a.requestedBy === created.id).length).toBe(2);
+
+    const otherRes = await app.inject({
+      method: 'GET',
+      url: `/api/approvals/${otherId}`,
+      headers: authHeader(),
+    });
+    expect(otherRes.json().data.status).toBe('pending');
   });
 });

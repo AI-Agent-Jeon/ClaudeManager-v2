@@ -177,7 +177,8 @@ export class ProjectService {
       // 상태 머신이 허용하지 않는 전이는 건너뛴다(예: waiting은 paused로 갈 수 없다)
       if (!validateTransition('agent', agent.status, targetStatus)) continue;
 
-      this.agentRepo.updateStatus(agent.id, targetStatus, now);
+      // 캐스케이드 대상은 cancelled/paused다 — waiting이 아니므로 waitingReason은 null이다
+      this.agentRepo.updateStatus(agent.id, targetStatus, null, now);
       this.statusChangeRepo.insert({
         entityType: EntityType.AGENT,
         entityId: agent.id,

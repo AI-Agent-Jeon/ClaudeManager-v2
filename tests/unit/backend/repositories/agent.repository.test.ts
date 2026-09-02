@@ -163,10 +163,30 @@ describe('AgentRepository.updateStatus', () => {
     const inserted = insertRow({ status: 'created' });
     const now = isoNow();
 
-    const updated = repo.updateStatus(inserted.id, 'running', now);
+    const updated = repo.updateStatus(inserted.id, 'running', null, now);
 
     expect(updated.status).toBe('running');
     expect(updated.updated_at).toBe(now);
+    expect(updated.waiting_reason).toBeNull();
+  });
+
+  it('status가 waiting이면 전달된 waitingReason이 저장된다 (v2.6 · Layer 2-6)', () => {
+    const inserted = insertRow({ status: 'running' });
+    const now = isoNow();
+
+    const updated = repo.updateStatus(inserted.id, 'waiting', 'ceo_approval', now);
+
+    expect(updated.status).toBe('waiting');
+    expect(updated.waiting_reason).toBe('ceo_approval');
+  });
+
+  it('status가 waiting이 아니면 waitingReason을 넘겨도 NULL로 강제된다 (DB CHECK와 동일 규칙)', () => {
+    const inserted = insertRow({ status: 'waiting', waitingReason: 'ceo_decision' });
+    const now = isoNow();
+
+    const updated = repo.updateStatus(inserted.id, 'running', 'ceo_approval', now);
+
+    expect(updated.status).toBe('running');
     expect(updated.waiting_reason).toBeNull();
   });
 });

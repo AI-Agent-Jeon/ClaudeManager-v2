@@ -162,15 +162,22 @@ export class AgentRepository {
   }
 
   /**
-   * `waiting_reason`은 항상 NULL로 초기화한다. 사유 부여는 승인·의사결정 요청
-   * 발행 시점(Layer 2-6 ApprovalService)의 몫이며, 이 계층은 그 입력을 받지 않는다
-   * (DES-007 v2 §3-2). CHECK 제약(`status='waiting' OR waiting_reason IS NULL`)은
-   * 이 값으로 항상 만족된다.
+   * `waitingReason`은 호출자(Layer 2-6 ApprovalService)가 넘긴 값을 쓴다 — 승인·
+   * 의사결정 요청 발행 시점에 사유가 정해진다(DES-007 v2 §3-2). 단, `status`가
+   * `'waiting'`이 아니면 넘어온 값과 무관하게 항상 NULL로 강제한다. DB CHECK
+   * 제약(`status='waiting' OR waiting_reason IS NULL`)과 같은 규칙을 애플리케이션
+   * 레벨에서도 지켜, CHECK 위반으로 500이 나는 경로를 만들지 않는다 (v2.6).
    */
-  updateStatus(id: string, status: string, updatedAt: string): AgentRow {
+  updateStatus(
+    id: string,
+    status: string,
+    waitingReason: string | null,
+    updatedAt: string,
+  ): AgentRow {
+    const reason = status === 'waiting' ? waitingReason : null;
     this.db
-      .prepare('UPDATE agents SET status = ?, waiting_reason = NULL, updated_at = ? WHERE id = ?')
-      .run(status, updatedAt, id);
+      .prepare('UPDATE agents SET status = ?, waiting_reason = ?, updated_at = ? WHERE id = ?')
+      .run(status, reason, updatedAt, id);
     return this.findById(id) as AgentRow;
   }
 

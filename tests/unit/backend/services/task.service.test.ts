@@ -115,7 +115,7 @@ describe('TaskService.getById — FR-008', () => {
 
 describe('TaskService.updateStatus — FR-008', () => {
   it('Given Agent가 running일 때 When Task를 ready → in_progress로 전이하면 Then 성공한다', async () => {
-    agentRepo.updateStatus(agentId, 'running', new Date().toISOString());
+    agentRepo.updateStatus(agentId, 'running', null, new Date().toISOString());
     const task = await service.create({ agentId, title: '전이테스트' });
 
     const updated = await service.updateStatus(task.id, 'in_progress');
@@ -135,7 +135,7 @@ describe('TaskService.updateStatus — FR-008', () => {
   });
 
   it('Task는 in_review를 거쳐야 completed가 된다 — in_progress → completed 직접 전이는 거부된다 (DES-007 §4)', async () => {
-    agentRepo.updateStatus(agentId, 'running', new Date().toISOString());
+    agentRepo.updateStatus(agentId, 'running', null, new Date().toISOString());
     const task = await service.create({ agentId, title: '직접완료불가' });
     await service.updateStatus(task.id, 'in_progress');
 
@@ -155,7 +155,7 @@ describe('TaskService.updateStatus — FR-008', () => {
   });
 
   it('in_review를 거치면 completed로 전이할 수 있다 (DES-007 §4)', async () => {
-    agentRepo.updateStatus(agentId, 'running', new Date().toISOString());
+    agentRepo.updateStatus(agentId, 'running', null, new Date().toISOString());
     const task = await service.create({ agentId, title: '정상완료' });
     await service.updateStatus(task.id, 'in_progress');
     await service.updateStatus(task.id, 'in_review');
@@ -176,7 +176,7 @@ describe('TaskService.updateStatus — FR-008', () => {
   });
 
   it('상태 변경이 status_changes 이력에 기록된다 (FR-009 연동)', async () => {
-    agentRepo.updateStatus(agentId, 'running', new Date().toISOString());
+    agentRepo.updateStatus(agentId, 'running', null, new Date().toISOString());
     const task = await service.create({ agentId, title: '이력연동' });
 
     await service.updateStatus(task.id, 'in_progress');
