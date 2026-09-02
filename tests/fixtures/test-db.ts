@@ -94,6 +94,34 @@ export function seedAgentChannel(db: Database.Database, agentId: string): string
   return id;
 }
 
+export function seedMessage(
+  db: Database.Database,
+  conversationId: string,
+  overrides: {
+    id?: string;
+    msgType?: string;
+    senderRole?: string;
+    body?: string;
+    structured?: string | null;
+    createdAt?: string;
+  } = {},
+): string {
+  const id = overrides.id ?? crypto.randomUUID();
+  db.prepare(
+    `INSERT INTO messages (id, conversation_id, msg_type, sender_role, body, structured, created_at)
+     VALUES (?,?,?,?,?,?,?)`,
+  ).run(
+    id,
+    conversationId,
+    overrides.msgType ?? 'MSG-01',
+    overrides.senderRole ?? 'ceo',
+    overrides.body ?? `메시지-${id.slice(0, 8)}`,
+    overrides.structured ?? null,
+    overrides.createdAt ?? isoNow(),
+  );
+  return id;
+}
+
 export function seedPhase(
   db: Database.Database,
   overrides: { number?: number; name?: string } = {},
