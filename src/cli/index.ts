@@ -2,7 +2,11 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
+import { registerAgentCommand } from './commands/agent.js';
 import { registerAuthCommand } from './commands/auth.js';
+import { registerProjectCommand } from './commands/project.js';
+import { registerStatusChangeCommand } from './commands/status-changes.js';
+import { registerTaskCommand } from './commands/task.js';
 
 /**
  * Commander 진입점
@@ -10,11 +14,12 @@ import { registerAuthCommand } from './commands/auth.js';
  * 정의 원본: DES-006 v3.2 §1(GUI/CLI 용어 대응)·§8(공통 동작 규칙) ·
  * DES-008 v3.1 §CLI Entry
  *
- * 이번 Layer(3-1)는 `cm auth login/logout/status`만 붙인다. `project`·`agent`·
- * `task`·`chat`·`approval`·`progress` 명령 그룹은 Layer 3-2에서 그룹별로
- * 추가한다 — 자리를 미리 비워 두되(이 파일에 register 호출을 나열할 구조만
- * 만들고) 빈 명령을 등록하지는 않는다. 동작하지 않는 명령이 `--help`에
- * 나타나면 대표가 실행해보고서야 미구현임을 알게 된다.
+ * Layer 3-1은 `cm auth login/logout/status`만 붙였다. Layer 3-2 그룹 A가
+ * `project`·`agent`·`task`·`status-changes`(SCR-P01~SC01, 기본 CRUD 14개
+ * 명령)를 이어 붙인다. `chat`·`inbox`·`decide`·`approvals`·`review`·
+ * `progress`·`stage`·`artifacts`(그룹 B·C·D)는 여전히 자리만 비워 둔다 —
+ * 동작하지 않는 명령이 `--help`에 나타나면 대표가 실행해보고서야
+ * 미구현임을 알게 된다.
  */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -38,10 +43,13 @@ export function buildProgram(): Command {
     .version(readVersion());
 
   registerAuthCommand(program);
-  // Layer 3-2에서 여기에 이어 붙인다:
-  // registerProjectCommand(program) · registerAgentCommand(program) ·
-  // registerTaskCommand(program) · registerChatCommand(program) ·
-  // registerApprovalCommand(program) · registerProgressCommand(program)
+  registerProjectCommand(program);
+  registerAgentCommand(program);
+  registerTaskCommand(program);
+  registerStatusChangeCommand(program);
+  // 그룹 B·C·D에서 여기에 이어 붙인다:
+  // registerChatCommand(program) · registerApprovalCommand(program) ·
+  // registerProgressCommand(program)
 
   return program;
 }

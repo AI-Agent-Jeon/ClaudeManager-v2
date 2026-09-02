@@ -116,6 +116,39 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 - `cm`(`src/cli/index.ts`) — Commander 진입점. `--help` 동작, 성공 0/실패 비0 종료 코드. 다른 명령
   그룹(`project`·`agent`·`task`·`chat`·`approval`·`progress`)은 Layer 3-2에서 그룹별로 추가한다
 
+**CLI (Layer 3-2 그룹 A)** — `cm project/agent/task/status-changes` 기본 CRUD 14개 명령
+- `src/cli/output.ts` — 목록 3종(`project`·`agent`·`task`)·`status-changes`가 공유하는 표·박스·페이지
+  푸터 헬퍼(`renderTable`·`formatFields`·`paginationFooter`·`shortId`·`truncateName`·`formatTimestamp`
+  등). `auth.ts`엔 목록 화면이 없어 이 그룹이 최초로 굳힌 관용구다(DES-006 §8 출력 형식·ID 축약 규칙·
+  출력 컬럼 규칙을 그대로 구현) — 세 목록이 서로 다른 표 렌더링을 만들지 않게 이 헬퍼 하나만 거친다
+- `src/cli/runtime.ts` — 14개 명령이 공유하는 실행 골격. `checkAuth`(로컬 토큰으로 "토큰 없음"·"만료"를
+  서버 왕복 없이 즉시 판정) · `resolveId`(§8 "명령어 인자: 앞 8자리 허용" — 백엔드 `findById`는 정확히
+  일치하는 UUID만 찾으므로 8자 접두어를 목록 조회로 직접 전체 UUID로 확장하고, 접두어 충돌은 후보 목록 +
+  "더 긴 ID를 입력하세요"로 응답) · `diffCascade`/`cascadeBlock`(PATCH 응답엔 캐스케이드 정보가 없어
+  전이 전후 스냅샷을 비교해 SCR-P04·AG04의 "캐스케이드 대상 전체 목록"을 도출) · `defaultPromptConfirm`
+  (`cm agent delete`의 y/N 확인, `auth.ts`의 `defaultPromptSecret`과 같은 NOT_TTY 가드 원칙)
+- `cm project create/list/status`(`src/cli/commands/project.ts`, DES-006 SCR-P01~P04) — 상세 조회의
+  "허용 상태 전이 목록"은 API 응답에 없는 필드라 `shared/state-transitions.ts`(백엔드 `state-machine.ts`와
+  공유하는 단일 원본)를 직접 조회해 도출한다. `--set cancelled`는 전이 전후 프로젝트 상세를 비교해
+  캐스케이드된 Agent 목록(이름+ID+전이)을 함께 보여준다
+- `cm agent create/list/status/delete`(`src/cli/commands/agent.ts`, DES-006 SCR-AG01~AG05) — 생성
+  결과의 "소속 프로젝트(이름+ID)"를 위해 성공 후 프로젝트를 한 번 더 조회한다. `--set`이
+  `PARENT_NOT_ACTIVE`로 실패하면(상위 프로젝트 비활성) 프로젝트명·현재상태를 별도 조회해 채운다(에러
+  응답엔 상태 텍스트만 있고 이름이 없다). `delete`는 PRM-02(Task 존재)·PRM-03(Task 없음) 확인 프롬프트를
+  거치고(`--force`로 생략 가능, 비대화형이면 즉시 중단), 삭제 결과에 **보관된 대화 ID(D-27)**·**마감된
+  승인 건수(R-04)**를 함께 출력한다 — 삭제가 무엇을 남기고 무엇을 닫았는지 보여준다
+- `cm task create/list/status`(`src/cli/commands/task.ts`, DES-006 SCR-T01~T04) — Task는 하위
+  엔티티가 없어 캐스케이드·삭제 명령이 없다. 나머지는 `project.ts`·`agent.ts`와 같은 패턴
+- `cm status-changes`(`src/cli/commands/status-changes.ts`, DES-006 SCR-SC01) — `--entity-id` 필터가
+  없을 때만 ID 컬럼을 추가한다(EVT-SC01-2). `--entity-id`는 project·agent·task 세 테이블에 걸친 값이라
+  어느 목록에서 접두어를 확장해야 할지 알 수 없어 전체 UUID를 그대로 받는다(자율 판단, 등급 낮음)
+- **`--project`·`--agent` 참조 옵션도 §8 ID 축약 규칙 대상** — `cm agent create --project`·
+  `cm task create --agent`·`cm agent list --project`·`cm task list --agent`가 받는 ID를 전부
+  `resolveId()`로 접두어 해석한다. 최초 구현은 상세/상태변경/삭제의 `<id>` 인자만 해석하고 이 네
+  옵션은 그대로 API에 넘겨, 8자 접두어를 넣으면(목록 화면이 보여주는 그대로) 항상 `PROJECT_NOT_FOUND`/
+  `AGENT_NOT_FOUND`이거나 목록 필터가 조용히 0건이 되는 문제가 있었다 — 실제 백엔드를 띄워 14개 명령을
+  손으로 돌리는 과정(개발 지시 §6 항목 5)에서 발견해 교정
+
 ### Changed
 
 - **`GATE_REQUIRED_SKILLS`를 단일 원본으로 승격** — `phase.service.ts`의 모듈 지역 상수였던 것을
@@ -149,6 +182,7 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 - `DELETE /api/agents/:id`가 `closedApprovalCount`를 항상 0으로 반환하던 것을 실제 마감 건수로 교정 (R-04)
 - **R-04 트랜잭션의 원자성이 주석에만 의존하던 문제** — `ApprovalService.closeByRequester()`·`AgentService.delete()`를 `db.transaction()` 안에서 `void`로 fire-and-forget 호출하던 구조는, 둘 다 `async`라 나중에 내부에 `await`가 하나 추가되면 그 뒤 쓰기가 커밋 이후로 밀려 원자성이 조용히 깨지고, 두 번째 호출이 거부되어도 `void`가 삼켜 unhandled rejection이 되며 트랜잭션은 그대로 커밋되는 위험이 있었다. `closeByRequesterSync()`·`deleteSync()` 동기 코어를 추출해 `DELETE /api/agents/:id`가 이를 트랜잭션 콜백 안에서 직접 호출·반환하도록 교정 — `async`가 아니므로 내부에 `await`를 쓰면 컴파일이 실패해, "트랜잭션 콜백 안에서 안전하다"는 불변조건을 타입 체커가 강제한다. 사전 조회(`countPendingByRequester`)·fire-and-forget이 모두 불필요해졌다. 두 실패 순서(승인 마감 후 Agent 삭제 실패 / 승인 마감 자체 실패) 모두 전건 롤백되는지 회귀 테스트로 검증
 - **`AgentService.create()`에 남아 있던 같은 종류의 fire-and-forget 트랜잭션 호출** — `db.transaction()` 콜백 안에서 `async`인 `ConversationService.createForAgent()`를 `void`로 호출하던 것을, R-04와 같은 방식으로 `createForAgentSync()` 동기 코어를 추출해 직접 호출·`void` 제거로 교정. `db.transaction()` 콜백을 쓰는 나머지 지점(`PhaseService`·`ApprovalService`·`migrate.ts`)은 전수 확인 결과 전부 동기 Repository 호출만 있어 해당 없음
+- **`cm project status --set`·`cm agent status --set`이 캐스케이드 대상이 아닐 때 "이전상태"를 빈 문자열로 보여주던 문제** — `--set cancelled`일 때만 전이 전 스냅샷을 조회하도록 짜여 있어, 그 외 모든 전이(예: `ready → running`)가 `전이:  → running`처럼 출력됐다. 전이 전 상태 조회를 캐스케이드 여부와 무관하게 항상 수행하도록 교정 — 실제 백엔드로 14개 명령을 손으로 돌리다 발견했다(개발 지시 §6 항목 5)
 
 ### Security
 
@@ -167,6 +201,6 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 ### 미반영 (Phase 1 잔여)
 
 - WebSocket 엔드포인트 (`WS /ws`, `WS /ws/conversations/:id`) — Hub만 구현됨. `approval:created`·`approval:updated` 브로드캐스트 호출은 있으나 실제 소켓 라우트 배선은 다음 계층
-- CLI 명령 그룹 — `cm project`·`cm agent`·`cm task`·`cm chat`·`cm approvals`·`cm decide`·`cm progress` 등 (`cm auth`만 Layer 3-1에서 구현됨, 나머지는 Layer 3-2)
+- CLI 명령 그룹 — `cm chat`·`cm inbox`·`cm decide`·`cm approvals`·`cm review`·`cm progress`·`cm stage`·`cm artifacts` (`cm auth`는 Layer 3-1, `cm project`·`cm agent`·`cm task`·`cm status-changes`는 Layer 3-2 그룹 A에서 구현됨. 그룹 B·C·D 잔여)
 - FTS5 한국어 토크나이저 미확정 — `unicode61`은 조사가 붙은 어절을 원형으로 못 찾는다. `trigram`과 실데이터 비교 후 확정
 - Graceful Shutdown이 단위 테스트 커버리지에서 제외됨 — 통합 테스트에서 다뤄야 한다
