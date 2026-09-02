@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { AgentRepository } from '../../../../src/backend/repositories/agent.repository.js';
 import { ProjectRepository } from '../../../../src/backend/repositories/project.repository.js';
 import { StatusChangeRepository } from '../../../../src/backend/repositories/status-change.repository.js';
 import { ProjectService } from '../../../../src/backend/services/project.service.js';
 import { AppError } from '../../../../src/backend/utils/errors.js';
-import { createTestDb, type TestDb } from '../../../fixtures/test-db.js';
+import { createTestDb, seedAgent, type TestDb } from '../../../fixtures/test-db.js';
 
 /**
  * FR-003 ~ FR-006 — ProjectService
@@ -15,11 +16,13 @@ import { createTestDb, type TestDb } from '../../../fixtures/test-db.js';
 let testDb: TestDb;
 let service: ProjectService;
 let statusChangeRepo: StatusChangeRepository;
+let agentRepo: AgentRepository;
 
 beforeEach(() => {
   testDb = createTestDb();
   statusChangeRepo = new StatusChangeRepository(testDb.db);
-  service = new ProjectService(new ProjectRepository(testDb.db), statusChangeRepo);
+  agentRepo = new AgentRepository(testDb.db);
+  service = new ProjectService(new ProjectRepository(testDb.db), statusChangeRepo, agentRepo);
 });
 
 afterEach(() => {
@@ -110,6 +113,17 @@ describe('ProjectService.getById — FR-005', () => {
       expect((e as AppError).code).toBe('PROJECT_NOT_FOUND');
     }
   });
+
+  it('Given 프로젝트에 Agent가 있을 때 When 상세 조회하면 Then agents가 채워진다 (DES-004 §5)', async () => {
+    const created = await service.create({ name: 'Agent포함' });
+    seedAgent(testDb.db, created.id, { name: '에이전트-A' });
+    seedAgent(testDb.db, created.id, { name: '에이전트-B' });
+
+    const detail = await service.getById(created.id);
+
+    expect(detail.agents.length).toBe(2);
+    expect(detail.agents.map((a) => a.name).sort()).toEqual(['에이전트-A', '에이전트-B']);
+  });
 });
 
 describe('ProjectService.updateStatus — FR-006', () => {
@@ -146,5 +160,33 @@ describe('ProjectService.updateStatus — FR-006', () => {
     } catch (e) {
       expect((e as AppError).code).toBe('PROJECT_NOT_FOUND');
     }
+  });
+
+  it('Given Project가 running/waiting Agent를 가질 때 When cancelled로 전이하면 Then 소속 Agent가 일괄 cancelled된다 (DES-007 §8)', async () => {
+    const created = await service.create({ name: '캐스케이드-취소' });
+    await service.updateStatus(created.id, 'running');
+    const runningAgentId = seedAgent(testDb.db, created.id, { status: 'running' });
+    const waitingAgentId = seedAgent(testDb.db, created.id, { status: 'waiting' });
+    const createdAgentId = seedAgent(testDb.db, created.id, { status: 'created' });
+
+    await service.updateStatus(created.id, 'cancelled');
+
+    expect(agentRepo.findById(runningAgentId)?.status).toBe('cancelled');
+    expect(agentRepo.findById(waitingAgentId)?.status).toBe('cancelled');
+    // created는 "실행 중/대기 중"이 아니라 캐스케이드 대상이 아니다
+    expect(agentRepo.findById(createdAgentId)?.status).toBe('created');
+  });
+
+  it('Given Project가 running Agent를 가질 때 When paused로 전이하면 Then running Agent만 paused된다 (DES-007 §8)', async () => {
+    const created = await service.create({ name: '캐스케이드-일시정지' });
+    await service.updateStatus(created.id, 'running');
+    const runningAgentId = seedAgent(testDb.db, created.id, { status: 'running' });
+    const waitingAgentId = seedAgent(testDb.db, created.id, { status: 'waiting' });
+
+    await service.updateStatus(created.id, 'paused');
+
+    expect(agentRepo.findById(runningAgentId)?.status).toBe('paused');
+    // waiting → paused는 AGENT_TRANSITIONS에 없어 캐스케이드에서 제외된다
+    expect(agentRepo.findById(waitingAgentId)?.status).toBe('waiting');
   });
 });

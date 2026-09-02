@@ -64,8 +64,11 @@ function buildWhere(opts: FindManyOpts): { clause: string; params: unknown[] } {
     params.push(opts.status);
   }
   if (opts.projectId) {
-    where.push('a.project_id = ?');
-    params.push(opts.projectId);
+    // 살아 있는 Agent는 조인으로, 삭제된 Agent(아카이브 채널)는 스냅샷으로 맞춘다.
+    // 조인만 보면 Agent가 지워진 순간 그 채널이 필터에서 사라진다 —
+    // 대화는 보존(D-27)하면서 "이 프로젝트의 대화"에서는 빠지는 모순이 생긴다.
+    where.push("(a.project_id = ? OR json_extract(c.entity_snapshot, '$.project_id') = ?)");
+    params.push(opts.projectId, opts.projectId);
   }
   if (opts.from) {
     where.push('c.created_at >= ?');

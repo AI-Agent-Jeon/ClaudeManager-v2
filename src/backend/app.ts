@@ -3,11 +3,13 @@ import { ErrorCode } from '../shared/constants.js';
 import { type AppConfig, loadConfig } from './config.js';
 import { registerAuth } from './plugins/auth.js';
 import { registerDatabase } from './plugins/database.js';
+import { registerAgentRoutes } from './routes/agents.routes.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerConversationRoutes } from './routes/conversations.routes.js';
 import { registerHealthRoutes } from './routes/health.routes.js';
 import { registerProjectRoutes } from './routes/projects.routes.js';
 import { registerStatusChangeRoutes } from './routes/status-changes.routes.js';
+import { registerTaskRoutes } from './routes/tasks.routes.js';
 import { commonSchemas } from './schemas/common.schema.js';
 import { AppError, toErrorResponse } from './utils/errors.js';
 import { WebSocketHub } from './ws/hub.js';
@@ -54,6 +56,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerHealthRoutes(app, config.version);
   registerAuthRoutes(app, config);
   registerProjectRoutes(app);
+  registerAgentRoutes(app);
+  registerTaskRoutes(app);
   registerStatusChangeRoutes(app);
   registerConversationRoutes(app);
 

@@ -1,5 +1,6 @@
-import { EntityType, ErrorCode, type ProjectStatus } from '../../shared/constants.js';
-import type { Pagination, Project, ProjectDetail } from '../../shared/types.js';
+import { AgentStatus, EntityType, ErrorCode, type ProjectStatus } from '../../shared/constants.js';
+import type { Agent, Pagination, Project, ProjectDetail } from '../../shared/types.js';
+import type { AgentRepository, AgentRow } from '../repositories/agent.repository.js';
 import type { ProjectRepository, ProjectRow } from '../repositories/project.repository.js';
 import type { StatusChangeRepository } from '../repositories/status-change.repository.js';
 import { AppError } from '../utils/errors.js';
@@ -41,10 +42,32 @@ function toProject(row: ProjectRow): Project {
   };
 }
 
+/**
+ * AgentService의 toAgent와 같은 변환이다. Service 간 매핑 함수를 공유하지
+ * 않는 것은 project.service.ts가 StatusChangeRepository를 직접 쓰는 것과
+ * 같은 원칙이다 — "허용된 Service 간 의존 4건" 밖의 결합을 늘리지 않는다.
+ */
+function toAgentDto(row: AgentRow): Agent {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    name: row.name,
+    type: row.type,
+    status: row.status as AgentStatus,
+    skill: row.skill,
+    config: JSON.parse(row.config) as Record<string, unknown>,
+    retryCount: row.retry_count,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export class ProjectService {
   constructor(
     private readonly projectRepo: ProjectRepository,
     private readonly statusChangeRepo: StatusChangeRepository,
+    // 2-4 AgentService 도입 — ProjectDetail.agents · 캐스케이드에 쓴다 (DES-004 §5 · DES-007 §8)
+    private readonly agentRepo: AgentRepository,
   ) {}
 
   /** FR-003 — 신규 프로젝트는 항상 'ready'로 시작한다 (DES-004 §3) */
@@ -93,20 +116,15 @@ export class ProjectService {
     };
   }
 
-  /**
-   * FR-005
-   *
-   * DES-004 §5는 `agentRepo.findByProjectId(id)`로 소속 Agent를 붙인다.
-   * AgentRepository는 이번 범위(ANL-002 2-2)에 없다 — 2-3(AgentService)에서
-   * 추가되면 이 자리에 주입한다. 그때까지는 빈 배열을 돌려준다.
-   */
+  /** FR-005 — 소속 Agent 목록을 붙인다 (DES-004 §5) */
   async getById(id: string): Promise<ProjectDetail> {
     const row = this.projectRepo.findById(id);
     if (!row) {
       throw new AppError(404, ErrorCode.PROJECT_NOT_FOUND, `프로젝트를 찾을 수 없습니다: ${id}`);
     }
 
-    return { ...toProject(row), agents: [] };
+    const agents = this.agentRepo.findByProjectId(id).map(toAgentDto);
+    return { ...toProject(row), agents };
   }
 
   /** FR-006 */
@@ -142,10 +160,32 @@ export class ProjectService {
       changedAt: now,
     });
 
-    // TODO(2-3 AgentService 도입 후): Project → cancelled/paused 캐스케이드로
-    // 소속 활성 Agent를 일괄 전이한다 (DES-004 §6 · DES-007 §8). AgentService가
-    // 아직 없어 이번 범위(ANL-002 2-2)에서는 구현하지 않는다 — 위임 지시사항.
+    // 캐스케이드: Project → cancelled/paused ⇒ 소속 활성(running/waiting) Agent 일괄 전이 (DES-007 v2 §8)
+    if (newStatus === 'cancelled' || newStatus === 'paused') {
+      this.cascadeToAgents(id, newStatus, now);
+    }
 
     return toProject(updated);
+  }
+
+  private cascadeToAgents(projectId: string, projectNewStatus: string, now: string): void {
+    const targetStatus =
+      projectNewStatus === 'cancelled' ? AgentStatus.CANCELLED : AgentStatus.PAUSED;
+    const candidates = this.agentRepo.findActiveByProjectId(projectId);
+
+    for (const agent of candidates) {
+      // 상태 머신이 허용하지 않는 전이는 건너뛴다(예: waiting은 paused로 갈 수 없다)
+      if (!validateTransition('agent', agent.status, targetStatus)) continue;
+
+      this.agentRepo.updateStatus(agent.id, targetStatus, now);
+      this.statusChangeRepo.insert({
+        entityType: EntityType.AGENT,
+        entityId: agent.id,
+        fromStatus: agent.status,
+        toStatus: targetStatus,
+        changedBy: 'system',
+        changedAt: now,
+      });
+    }
   }
 }
