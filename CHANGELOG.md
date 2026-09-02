@@ -97,6 +97,25 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   `BootstrapService.seed()` 완료 후 `start()`, Graceful Shutdown에서 가장 먼저 `stop()`을 호출한다(DB 종료보다 먼저
   멈춰야 tick이 닫힌 연결에 쓰지 않는다)
 
+**CLI (Layer 3-1)** — `src/cli/` 골격 + `cm auth` 수직 슬라이스
+- `ApiClient`(`src/cli/api-client.ts`) — undici 래퍼. Base URL 기본값 `http://127.0.0.1:3000/api`
+  (`CM_HOST`·`CM_PORT`로 재정의 — 백엔드(`src/backend/config.ts`)와 같은 환경 변수를 재사용해
+  "서버는 다른 포트, CLI는 기본 포트" 불일치를 막는다). 서버 에러 응답의 `code`·선택 필드 `details`
+  (DEV-D-04)를 보존해 `ApiRequestError`로 던지고, `ECONNREFUSED`는 스택 트레이스 대신
+  `ServerUnreachableError`로 구분해 "서버가 실행 중이 아닙니다" 수준의 안내를 낼 수 있게 한다.
+  `dispatcher` 옵션으로 undici `MockAgent`를 주입할 수 있어 실제 소켓 없이 테스트한다
+- `CLI 설정`(`src/cli/config.ts`) — 토큰을 `~/.claude-manager/config.json`에 저장(`0o600`, Windows는
+  모드 비트 무시). 파일 없음·손상된 JSON·필드 누락을 전부 "미인증"과 동일하게 취급해 예외 없이 `null`을
+  돌려준다 — 재로그인으로 자연 복구
+- `cm auth login/logout/status`(`src/cli/commands/auth.ts`, DES-006 SCR-A01~A03) — 판정 로직(`run*`)과
+  Commander 연결을 분리했다. 로그인 시크릿은 `readline`을 마스킹 입력으로 재정의해 받고
+  (`--force`로 생략 불가, PRM-01), 비대화형 환경(파이프·CI)에서는 즉시 중단한다. 결과 판별 유니온에
+  **토큰 원문을 담지 않는다** — 저장 경로·만료일시만 담아 로그·에러 메시지에 토큰이 찍히지 않게 한다
+  (요구사항 명시 검증 항목). `cm auth status`는 서버 unreachable이어도 로컬에 유효한 토큰이 있으면
+  경고블록으로만 알리고 실패로 취급하지 않는다(EVT-A03-4)
+- `cm`(`src/cli/index.ts`) — Commander 진입점. `--help` 동작, 성공 0/실패 비0 종료 코드. 다른 명령
+  그룹(`project`·`agent`·`task`·`chat`·`approval`·`progress`)은 Layer 3-2에서 그룹별로 추가한다
+
 ### Changed
 
 - **`GATE_REQUIRED_SKILLS`를 단일 원본으로 승격** — `phase.service.ts`의 모듈 지역 상수였던 것을
@@ -148,6 +167,6 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 ### 미반영 (Phase 1 잔여)
 
 - WebSocket 엔드포인트 (`WS /ws`, `WS /ws/conversations/:id`) — Hub만 구현됨. `approval:created`·`approval:updated` 브로드캐스트 호출은 있으나 실제 소켓 라우트 배선은 다음 계층
-- CLI (`cm approvals`, `cm decide` 등)
+- CLI 명령 그룹 — `cm project`·`cm agent`·`cm task`·`cm chat`·`cm approvals`·`cm decide`·`cm progress` 등 (`cm auth`만 Layer 3-1에서 구현됨, 나머지는 Layer 3-2)
 - FTS5 한국어 토크나이저 미확정 — `unicode61`은 조사가 붙은 어절을 원형으로 못 찾는다. `trigram`과 실데이터 비교 후 확정
 - Graceful Shutdown이 단위 테스트 커버리지에서 제외됨 — 통합 테스트에서 다뤄야 한다
