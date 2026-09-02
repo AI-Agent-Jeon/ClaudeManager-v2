@@ -374,8 +374,17 @@ export class ConversationService {
     return toMessage(row);
   }
 
-  /** Agent 생성 시 CH-AGENT 개설 (D-09). Route가 Agent 생성 트랜잭션 안에서 호출한다 (DES-004 §7) */
-  async createForAgent(agentId: string): Promise<Conversation> {
+  /**
+   * 동기 코어 — Agent 생성 시 CH-AGENT 개설 (D-09).
+   *
+   * `AgentService.create()`가 `db.transaction()` 콜백 **안에서 이 메서드를
+   * 직접** 호출한다. `async`가 아니므로 본문 안에 `await`를 쓰면 컴파일 자체가
+   * 되지 않는다 — "트랜잭션 콜백 안에서 안전하다"(내부에 실제 비동기 지점이
+   * 없다)는 불변조건을 주석이 아니라 타입 체커가 강제한다. `conversationRepo`는
+   * 동기라 자연스럽게 만족된다. `agent-atomicity.test.ts`가 이 전제를 회귀
+   * 테스트로 지킨다.
+   */
+  createForAgentSync(agentId: string): Conversation {
     const id = crypto.randomUUID();
     this.conversationRepo.insert({
       id,
@@ -388,6 +397,16 @@ export class ConversationService {
     const row = this.conversationRepo.findByIdWithAgent(id) as ConversationWithAgentRow;
     // 방금 만든 채널이라 메시지가 없다 — 미읽음 0
     return toConversation(row, null, 0);
+  }
+
+  /**
+   * 공개 API — DES-004 §전체 함수 시그니처 요약의 `Promise<Conversation>`
+   * 그대로다. 동기 코어(`createForAgentSync`)를 감싸는 얇은 래퍼이며, 단독
+   * 호출(트랜잭션 조율이 필요 없는 경우)에 쓴다. Agent 생성 트랜잭션 조율에는
+   * 동기 코어를 쓴다.
+   */
+  async createForAgent(agentId: string): Promise<Conversation> {
+    return this.createForAgentSync(agentId);
   }
 
   /** Agent 종료(completed/cancelled) 시 CH-AGENT를 readonly로 전환한다 (DES-007 v2 §8) */

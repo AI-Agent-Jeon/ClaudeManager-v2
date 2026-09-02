@@ -129,11 +129,10 @@ export class AgentService {
     // DES-004 v2.4 §7 — 아래 3단계는 하나의 트랜잭션이다.
     // Agent만 만들어지고 채널이 없으면 `cm chat agent <id>`가 빈 채널을 만나 실패한다.
     //
-    // ⚠ 트랜잭션 안에서 `createForAgent`를 await하지 않는다. better-sqlite3의
-    //   트랜잭션은 동기 함수만 감싸며, await를 걸면 그 뒤 코드가 커밋 이후로
-    //   밀려 채널이 트랜잭션 밖에서 만들어진다.
-    //   `ConversationService.createForAgent`의 본문은 전부 동기 호출이라
-    //   안전하다 — **이 전제가 깨지면 안 된다.** rollback 테스트가 지킨다.
+    // 동기 코어(`ConversationService.createForAgentSync`)를 트랜잭션 콜백 안에서
+    // 직접 호출한다 — `async`가 아니므로 내부에 `await`를 쓰면 컴파일이 실패해
+    // "트랜잭션 콜백 안에서 안전하다"는 전제를 타입 체커가 강제한다(R-04와 같은
+    // 패턴 · Layer 2-6). fire-and-forget(`void`)이 필요 없어졌다.
     const row = this.db.transaction((): AgentRow => {
       const inserted = this.agentRepo.insert(insertRow);
 
@@ -146,7 +145,7 @@ export class AgentService {
         changedAt: now,
       });
 
-      void this.conversationService.createForAgent(id);
+      this.conversationService.createForAgentSync(id);
 
       return inserted;
     })();

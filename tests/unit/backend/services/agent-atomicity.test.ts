@@ -13,11 +13,11 @@ import { createTestDb, seedProject, type TestDb } from '../../../fixtures/test-d
  * Agent 생성 원자성 — DES-004 v2.4 §7 "아래 3단계는 하나의 트랜잭션"
  *
  * 왜 테스트가 필요한가: `AgentService.create`는 better-sqlite3 트랜잭션 안에서
- * `ConversationService.createForAgent`를 **await 없이** 호출한다. 그 함수의
- * 본문이 전부 동기이기 때문에 안전한 것이며, **누군가 거기에 await를 넣는
- * 순간 채널이 트랜잭션 밖에서 만들어진다.**
- *
- * 아래 테스트가 그 전제를 지킨다 — 채널 생성이 실패하면 Agent도 남으면 안 된다.
+ * `ConversationService.createForAgentSync`(동기 코어)를 직접 호출한다. 이
+ * 메서드는 `async`가 아니므로 내부에 `await`를 쓰면 컴파일이 실패한다 —
+ * "트랜잭션 콜백 안에서 안전하다"는 전제가 타입 체커로 강제된다(R-04와 같은
+ * 패턴). 아래 테스트는 그 전제 위에서 실제 원자성(롤백)을 검증한다 — 채널
+ * 생성이 실패하면 Agent·status_changes도 남으면 안 된다.
  */
 
 let testDb: TestDb;
@@ -72,11 +72,11 @@ describe('Agent 생성 원자성', () => {
     expect(countHistory()).toBe(1);
   });
 
-  it('채널 생성이 실패하면 Agent도 남지 않는다 (롤백)', async () => {
+  it('채널 생성이 실패하면 Agent·status_changes도 남지 않는다 (롤백)', async () => {
     const projectId = seedProject(testDb.db);
 
-    // 트랜잭션 안에서 터지도록 만든다
-    conversationService.createForAgent = () => {
+    // 트랜잭션 콜백 안에서 실제로 호출되는 동기 코어를 터뜨린다
+    conversationService.createForAgentSync = () => {
       throw new Error('채널 생성 실패 시뮬레이션');
     };
 
@@ -84,7 +84,7 @@ describe('Agent 생성 원자성', () => {
       '채널 생성 실패',
     );
 
-    // 트랜잭션이 없으면 여기서 Agent가 1건 남는다 — 그게 이 테스트가 막는 것이다
+    // 트랜잭션이 없으면 여기서 Agent·이력이 남는다 — 그게 이 테스트가 막는 것이다
     expect(countAgents()).toBe(0);
     expect(countChannels()).toBe(0);
     expect(countHistory()).toBe(0);
@@ -92,15 +92,15 @@ describe('Agent 생성 원자성', () => {
 
   it('롤백 후에도 같은 이름으로 다시 만들 수 있다', async () => {
     const projectId = seedProject(testDb.db);
-    const original = conversationService.createForAgent.bind(conversationService);
+    const original = conversationService.createForAgentSync.bind(conversationService);
 
-    conversationService.createForAgent = () => {
+    conversationService.createForAgentSync = () => {
       throw new Error('일시 실패');
     };
     await expect(service.create({ projectId, name: '재시도' })).rejects.toThrow();
 
     // 롤백이 제대로 됐다면 UNIQUE(project_id, name)에 걸리지 않는다
-    conversationService.createForAgent = original;
+    conversationService.createForAgentSync = original;
     const agent = await service.create({ projectId, name: '재시도' });
 
     expect(agent.name).toBe('재시도');
