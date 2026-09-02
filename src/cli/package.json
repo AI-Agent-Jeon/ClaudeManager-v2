@@ -1,0 +1,15 @@
+{
+  "name": "@claude-manager/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.ts",
+  "bin": {
+    "cm": "./index.ts"
+  },
+  "dependencies": {
+    "@claude-manager/shared": "*",
+    "commander": "^14.0.1",
+    "undici": "^7.16.0"
+  }
+}

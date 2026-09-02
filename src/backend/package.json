@@ -1,0 +1,15 @@
+{
+  "name": "@claude-manager/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./server.ts",
+  "dependencies": {
+    "@claude-manager/shared": "*",
+    "@fastify/jwt": "^10.0.0",
+    "@fastify/websocket": "^11.2.0",
+    "better-sqlite3": "^12.4.1",
+    "drizzle-orm": "^0.44.6",
+    "fastify": "^5.6.1"
+  }
+}
