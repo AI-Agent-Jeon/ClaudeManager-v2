@@ -7,6 +7,7 @@
  * 타입을 두 곳에 손으로 유지하지 않는다.
  */
 export const commonSchemas = {
+  // biome-ignore lint/style/useNamingConvention: $id는 JSON Schema 예약 키워드다
   $id: 'common',
   definitions: {
     uuid: { type: 'string', format: 'uuid' },
