@@ -1601,7 +1601,7 @@ function getAllowedTransitions(entityType: EntityType, fromStatus: string): stri
 |------------------|----------|
 | 함수 시그니처의 타입 | DES-009 코드 정의서 (Enum, ErrorCode, 상수) |
 | 시퀀스의 상태 전이 규칙 | DES-007 상태 흐름도 (전이 맵, 가드 조건) |
-| API 엔드포인트 세부 스펙 | DES-002 v2 API 명세서 (31종 · JSON Schema 규칙 · 에러 매핑) |
+| API 엔드포인트 세부 스펙 | DES-002 API 명세서 (34종 · JSON Schema 규칙 · 에러 매핑) |
 | DB 테이블/컬럼 | DES-003 v2 데이터 모델 (테이블 15종 · CHECK 제약) |
 | 컴포넌트 간 의존 방향 | DES-001 아키텍처 (C4 Component Diagram) |
 | CLI 명령 사용 시나리오 | DES-005 스토리보드 |
