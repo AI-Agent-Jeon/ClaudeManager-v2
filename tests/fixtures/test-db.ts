@@ -200,6 +200,40 @@ function seedApprovalDefaults(
   };
 }
 
+export interface SeedArtifactOverrides {
+  id?: string;
+  code?: string;
+  title?: string;
+  status?: string;
+  notionUrl?: string | null;
+  gitPath?: string | null;
+  updatedAt?: string;
+}
+
+/** artifacts — DES-003 v2.1 §4-4 */
+export function seedArtifact(
+  db: Database.Database,
+  stageId: string,
+  overrides: SeedArtifactOverrides = {},
+): string {
+  const id = overrides.id ?? crypto.randomUUID();
+  const code = overrides.code ?? `DOC-${id.slice(0, 8)}`;
+  db.prepare(
+    `INSERT INTO artifacts (id, stage_id, code, title, status, notion_url, git_path, updated_at)
+     VALUES (?,?,?,?,?,?,?,?)`,
+  ).run(
+    id,
+    stageId,
+    code,
+    overrides.title ?? code,
+    overrides.status ?? 'draft',
+    overrides.notionUrl ?? null,
+    overrides.gitPath ?? null,
+    overrides.updatedAt ?? isoNow(),
+  );
+  return id;
+}
+
 /** approvals — DES-003 v2.1 §4-1 */
 export function seedApproval(db: Database.Database, overrides: SeedApprovalOverrides = {}): string {
   const id = overrides.id ?? crypto.randomUUID();

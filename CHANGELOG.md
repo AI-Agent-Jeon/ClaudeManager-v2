@@ -66,6 +66,19 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   본문 없이 호출 가능하되 `preValidation`으로 `undefined` 본문을 `{}`로 정규화한 뒤 `additionalProperties: false`
   스키마를 통과시켜, 본문을 보내지 않은 요청은 통과시키고 알 수 없는 필드가 있는 본문은 거부한다.
   플로우 회귀 테스트로 `plan` 착수 → 완료 → `analyze` 착수가 실제로 성공하는지 고정
+- **산출물 동기화 추적 (`FR-031`, Layer 2-9 — Layer 2의 마지막 계층)** — `ArtifactService.list()`(`stage`·`syncStatus`
+  필터, SQL WHERE에서 직접 구성해 전건 메모리 필터링을 하지 않는다) · `getById()` · `getContent()`(본문 조회) ·
+  `upsert()`(`code` UNIQUE 기준 신규 생성/기존 갱신, `status`는 대상 밖이라 승인 흐름이 관리하는 값을 되돌리지
+  않는다) · 모듈 스코프 순수 함수 `deriveSyncStatus()`(저장하지 않고 `notionUrl`·`gitPath` 유무에서 파생,
+  DES-003 §4-4 4분기 — `notion_only`와 `missing`의 구분이 2026-09-01 "analyze 건너뜀" 오진단의 재발 방지선이라
+  전건을 명시적으로 테스트로 고정했다). 빈 문자열도 "없음"으로 취급(`ArtifactRepository`의 SQL 조건과 기준을
+  통일 — 갈리면 목록 필터와 상세 조회의 syncStatus가 서로 다른 값을 보이는 모순이 생긴다)
+- `GET /api/artifacts`(`stage`·`syncStatus` 쿼리 필터) · `GET /api/artifacts/:id/content`(검토 패널 본문 조회) — 후자는
+  `git_path`를 저장소 루트 기준으로 정규화하고 절대 경로·상위 디렉터리 탈출을 거부한다(§4 보안 방어, 아래 Security
+  참조). 성공·`gitPath=null`·존재하지 않는 산출물·존재하지 않는 파일·탈출 시도를 모두 회귀 테스트로 고정
+- `ArtifactRepository` — `findById()`·`findByCode()`·`findByCodes()`(코드 배열 일괄 조회, 빈 배열은 쿼리 없이 빈
+  배열)·`findMany()`(`syncStatus` 4분기를 SQL `WHERE` 조건으로 번역하는 `SYNC_STATUS_CLAUSE`)·`upsert()`(`ON
+  CONFLICT(code) DO UPDATE`, `status`는 SET 절에 없어 갱신 시 유지된다)
 
 ### Changed
 
@@ -83,6 +96,15 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 - `GET /api/conversations?project=` 필터가 `agents` 조인과 `entity_snapshot` 폴백을 함께 본다
 - `AgentRepository.updateStatus()`가 `waiting_reason`을 항상 NULL로 밀어넣던 것을 고쳐, 호출자가 넘긴 값을 쓰되 `status≠'waiting'`이면 NULL을 강제한다 (DB CHECK와 동일 규칙을 애플리케이션에서도 지킨다)
 - `AgentService.delete()`가 `ConversationService.archiveByEntity()`(await)를 거치지 않고 `ConversationRepository`를 직접 써서 대화를 아카이브한다 — `DELETE /api/agents/:id`가 승인 마감과 한 `db.transaction()` 안에서 이 메서드를 fire-and-forget으로 호출하므로, 내부에 실제 `await` 지점이 있으면 그 뒤 쓰기가 트랜잭션 밖으로 밀린다
+- **`ApprovalService`의 `toArtifactStub()` 제거 — 2-6이 남긴 스텁을 실제 조회로 교체 (Layer 2-9 §3)**. `ApprovalDetail.artifacts`가
+  이제 `artifacts` 테이블의 실제 `title`·`notionUrl`·`gitPath`·`syncStatus`로 채워진다 — 이전에는 코드 문자열만으로
+  `{ title: code, syncStatus: 'missing' }` 스텁을 만들어, DES-014 검토 패널이 산출물 상태를 전부 `missing`으로
+  보여주는 상태였다(2026-09-01 오진단을 시스템이 스스로 재현하는 상태였다). `ApprovalService`가 `ArtifactRepository`를
+  직접 주입받는다 — `ApprovalService → ArtifactService`는 "허용된 Service 간 의존 4건"에 없어, `PhaseService`가
+  집계를 위해 Repository를 직접 읽은 선례(Layer 2-7)를 따라 읽기 전용 조회는 Service 계층을 거치지 않는다.
+  `approvals.artifacts`의 코드가 `artifacts` 테이블에 없으면 조회 실패로 승인 상세 전체가 깨지지 않도록
+  `syncStatus='missing'` 표시값으로 채운다(`request()`·`resolve()`·`autoAdvance()`·`getById()`·`findGateApproval()`
+  전 경로에 적용, 회귀 테스트로 스텁이 사라졌는지·존재하지 않는 코드가 섞여도 안전한지 고정)
 
 ### Fixed
 
@@ -100,13 +122,18 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 - `POST /api/approvals/:id/resolve`가 `status` enum에서 `auto_advanced`·`pending`을 제외한다 — 타임아웃 자동 진행은 스케줄러 전용
 - 에러 응답에 내부 오류 원문을 노출하지 않는다 (SQLite 메시지에 파일 경로가 섞인다)
 - Phase 1은 `127.0.0.1` 루프백 전용. 외부 노출은 Phase 2 터널링 이후
+- `GET /api/artifacts/:id/content`가 `git_path`를 저장소 루트 기준 절대 경로로 정규화한 뒤 저장소 루트 밖을
+  가리키면 읽지 않는다 — 절대 경로 입력·`..` 상위 디렉터리 탈출·URL 인코딩된 탈출 시도(`..%2F`)를 전부 거부한다.
+  경로 주입 시도·존재하지 않는 파일·연결된 Git 경로 없음을 모두 동일한 `404 NOT_FOUND`로 응답해 클라이언트에
+  구분을 노출하지 않고, 에러 메시지에 파일 시스템 경로·OS 에러 원문(`ENOENT` 등)을 담지 않는다. 본문 읽기 크기
+  상한(2MB, 등급 낮음 자율 판단)을 두어 잘못 연결된 대용량 파일을 통째로 메모리에 올리지 않는다
 
 ### 미반영 (Phase 1 잔여)
 
 - WebSocket 엔드포인트 (`WS /ws`, `WS /ws/conversations/:id`) — Hub만 구현됨. `approval:created`·`approval:updated` 브로드캐스트 호출은 있으나 실제 소켓 라우트 배선은 다음 계층
 - `ApprovalTimeoutJob`(60초 주기 스케줄러) — `ApprovalService.findExpired()`/`autoAdvance()`는 구현됐고 Job이 이를 호출하기만 하면 된다
-- `PhaseService`/`StageService`(FR-029~031), 서버 기동 부트스트랩(R-01, CH-MAIN·Phase 1 시드) — 아직 없어 테스트가 `seedMainChannel` 픽스처로 채널을 직접 만든다
-- 승인 상세의 `artifacts`가 `ArtifactService` 연동 전이라 코드 문자열을 최소 스텁(`ArtifactRef`)으로만 채운다 — 실제 제목·Notion/Git 경로·동기화 상태는 ArtifactService 도입 후 채워진다
+- 서버 기동 부트스트랩(R-01, CH-MAIN·Phase 1 시드) — 아직 없어 테스트가 `seedMainChannel`·`seedPhase` 픽스처로 직접 만든다
+  (`PhaseService`·`StageService`는 Layer 2-7·2-8에서, `ArtifactService`는 Layer 2-9에서 이미 구현됨 — Layer 2 전 계층 완료)
 - CLI (`cm approvals`, `cm decide` 등)
 - FTS5 한국어 토크나이저 미확정 — `unicode61`은 조사가 붙은 어절을 원형으로 못 찾는다. `trigram`과 실데이터 비교 후 확정
 - Graceful Shutdown이 단위 테스트 커버리지에서 제외됨 — 통합 테스트에서 다뤄야 한다

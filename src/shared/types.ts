@@ -461,6 +461,25 @@ export interface CreateWipWaiverInput {
 }
 
 // ─────────────────────────────────────────────
+// 산출물 (FR-031)
+// ─────────────────────────────────────────────
+
+/** GET /api/artifacts — syncStatus는 저장 값이 아니라 파생값 기준으로 필터링한다 */
+export interface ListArtifactsOpts {
+  stage?: string;
+  syncStatus?: SyncStatus;
+}
+
+/** ArtifactService.upsert() 입력 — DES-004 §전체 함수 시그니처 요약 */
+export interface UpsertArtifactInput {
+  stageId: string;
+  code: string;
+  title: string;
+  notionUrl?: string;
+  gitPath?: string;
+}
+
+// ─────────────────────────────────────────────
 // WebSocket 이벤트 (NFR-003)
 // ─────────────────────────────────────────────
 

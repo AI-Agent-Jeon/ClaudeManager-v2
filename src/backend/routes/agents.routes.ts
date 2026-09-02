@@ -8,6 +8,7 @@ import type {
 } from '../../shared/types.js';
 import { AgentRepository } from '../repositories/agent.repository.js';
 import { ApprovalRepository } from '../repositories/approval.repository.js';
+import { ArtifactRepository } from '../repositories/artifact.repository.js';
 import { ConversationRepository } from '../repositories/conversation.repository.js';
 import { MessageRepository } from '../repositories/message.repository.js';
 import { ProjectRepository } from '../repositories/project.repository.js';
@@ -72,6 +73,7 @@ export function registerAgentRoutes(app: FastifyInstance): void {
     messageRepo,
     conversationRepo,
     agentRepo,
+    new ArtifactRepository(app.db),
     service,
     app.hub,
   );

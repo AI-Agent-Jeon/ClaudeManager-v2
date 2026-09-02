@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentRepository } from '../../../../src/backend/repositories/agent.repository.js';
 import { ApprovalRepository } from '../../../../src/backend/repositories/approval.repository.js';
+import { ArtifactRepository } from '../../../../src/backend/repositories/artifact.repository.js';
 import { ConversationRepository } from '../../../../src/backend/repositories/conversation.repository.js';
 import { MessageRepository } from '../../../../src/backend/repositories/message.repository.js';
 import { ProjectRepository } from '../../../../src/backend/repositories/project.repository.js';
@@ -14,8 +15,11 @@ import {
   createTestDb,
   seedAgent,
   seedApproval,
+  seedArtifact,
   seedMainChannel,
+  seedPhase,
   seedProject,
+  seedStages,
   type TestDb,
 } from '../../../fixtures/test-db.js';
 
@@ -29,6 +33,7 @@ let testDb: TestDb;
 let service: ApprovalService;
 let approvalRepo: ApprovalRepository;
 let agentRepo: AgentRepository;
+let artifactRepo: ArtifactRepository;
 let messageRepo: MessageRepository;
 let conversationRepo: ConversationRepository;
 let statusChangeRepo: StatusChangeRepository;
@@ -37,6 +42,7 @@ beforeEach(() => {
   testDb = createTestDb();
   approvalRepo = new ApprovalRepository(testDb.db);
   agentRepo = new AgentRepository(testDb.db);
+  artifactRepo = new ArtifactRepository(testDb.db);
   messageRepo = new MessageRepository(testDb.db);
   conversationRepo = new ConversationRepository(testDb.db);
   statusChangeRepo = new StatusChangeRepository(testDb.db);
@@ -59,6 +65,7 @@ beforeEach(() => {
     messageRepo,
     conversationRepo,
     agentRepo,
+    artifactRepo,
     agentService,
     new WebSocketHub(),
   );
@@ -476,5 +483,112 @@ describe('ApprovalService.closeByRequester — R-04', () => {
 
   it('마감할 건이 없으면 0을 돌려준다', async () => {
     expect(await service.closeByRequester(crypto.randomUUID())).toBe(0);
+  });
+});
+
+describe('ApprovalDetail.artifacts — §3 스텁 교체 회귀 테스트 (Layer 2-9)', () => {
+  it('approvals.artifacts에 저장된 코드가 실제 artifacts 행 값(title·notionUrl·gitPath·syncStatus)으로 채워진다', async () => {
+    const conversationId = seedMainChannel(testDb.db);
+    const phaseId = seedPhase(testDb.db);
+    const stages = seedStages(testDb.db, phaseId);
+    seedArtifact(testDb.db, stages.plan as string, {
+      code: 'PLN-001',
+      title: '요구사항 정의서',
+      notionUrl: 'https://notion/pln-001',
+      gitPath: 'docs/requirements/pln-001-requirements.md',
+    });
+
+    const detail = await service.request({
+      approvalType: 'APV-GATE',
+      level: 'high',
+      subject: 'plan → analyze 전환 승인',
+      options: [{ code: 'A', label: '승인' }],
+      artifacts: ['PLN-001'],
+      requestedBy: 'main',
+      conversationId,
+    });
+
+    expect(detail?.artifacts).toEqual([
+      {
+        code: 'PLN-001',
+        title: '요구사항 정의서',
+        notionUrl: 'https://notion/pln-001',
+        gitPath: 'docs/requirements/pln-001-requirements.md',
+        syncStatus: 'synced',
+      },
+    ]);
+  });
+
+  it('더 이상 최소 스텁(title=code, syncStatus 항상 missing)을 반환하지 않는다', async () => {
+    const conversationId = seedMainChannel(testDb.db);
+    const phaseId = seedPhase(testDb.db);
+    const stages = seedStages(testDb.db, phaseId);
+    seedArtifact(testDb.db, stages.plan as string, {
+      code: 'ANL-001',
+      title: '분석 보고서',
+      notionUrl: 'https://notion/anl-001',
+      gitPath: null,
+    });
+
+    const detail = await service.request({
+      approvalType: 'APV-CHOICE',
+      level: 'high',
+      subject: '분석 결과 검토',
+      options: [{ code: 'A', label: '승인' }],
+      artifacts: ['ANL-001'],
+      requestedBy: 'main',
+      conversationId,
+    });
+
+    const artifact = detail?.artifacts[0];
+    // 스텁이었다면 title이 코드와 같고 syncStatus가 항상 missing이었다 —
+    // notion_only(Git 동기화 누락)로 정확히 구분되어야 스텁이 사라진 것이다.
+    expect(artifact?.title).not.toBe('ANL-001');
+    expect(artifact?.title).toBe('분석 보고서');
+    expect(artifact?.syncStatus).toBe('notion_only');
+  });
+
+  it('존재하지 않는 코드가 섞여도 승인 상세 조회가 깨지지 않고 missing으로 채워진다', async () => {
+    const conversationId = seedMainChannel(testDb.db);
+    const phaseId = seedPhase(testDb.db);
+    const stages = seedStages(testDb.db, phaseId);
+    seedArtifact(testDb.db, stages.plan as string, {
+      code: 'PLN-001',
+      title: '요구사항 정의서',
+      notionUrl: 'https://notion/pln-001',
+      gitPath: 'docs/requirements/pln-001-requirements.md',
+    });
+
+    const detail = await service.request({
+      approvalType: 'APV-CHOICE',
+      level: 'high',
+      subject: '존재하지 않는 코드 포함',
+      options: [{ code: 'A', label: '승인' }],
+      artifacts: ['PLN-001', 'DOES-NOT-EXIST'],
+      requestedBy: 'main',
+      conversationId,
+    });
+
+    expect(detail?.artifacts).toHaveLength(2);
+    const missing = detail?.artifacts.find((a) => a.code === 'DOES-NOT-EXIST');
+    expect(missing).toEqual({
+      code: 'DOES-NOT-EXIST',
+      title: 'DOES-NOT-EXIST',
+      notionUrl: null,
+      gitPath: null,
+      syncStatus: 'missing',
+    });
+
+    // getById로 재조회해도 동일하게 안전하다
+    const refetched = await service.getById(detail?.id as string);
+    expect(refetched.artifacts).toHaveLength(2);
+  });
+
+  it('artifacts 코드가 비어 있으면 빈 배열을 돌려준다', async () => {
+    const id = seedApproval(testDb.db, { status: 'pending', artifacts: null });
+    const detail = await service.getById(id);
+    expect(detail.artifacts).toEqual([]);
+    // artifactRepo에 아무것도 없어도 예외 없이 빈 배열이어야 한다
+    expect(artifactRepo.findByCodes([])).toEqual([]);
   });
 });

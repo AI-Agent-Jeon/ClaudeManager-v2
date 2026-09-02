@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentRepository } from '../../../../src/backend/repositories/agent.repository.js';
 import { ApprovalRepository } from '../../../../src/backend/repositories/approval.repository.js';
+import { ArtifactRepository } from '../../../../src/backend/repositories/artifact.repository.js';
 import { ConversationRepository } from '../../../../src/backend/repositories/conversation.repository.js';
 import { MessageRepository } from '../../../../src/backend/repositories/message.repository.js';
 import { PhaseRepository } from '../../../../src/backend/repositories/phase.repository.js';
@@ -60,6 +61,7 @@ beforeEach(() => {
     messageRepo,
     conversationRepo,
     agentRepo,
+    new ArtifactRepository(testDb.db),
     agentService,
     new WebSocketHub(),
   );

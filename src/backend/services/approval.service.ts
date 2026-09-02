@@ -29,12 +29,19 @@ import type {
   ApprovalRepository,
   ApprovalRow,
 } from '../repositories/approval.repository.js';
+import type { ArtifactRepository, ArtifactRow } from '../repositories/artifact.repository.js';
 import type { ConversationRepository } from '../repositories/conversation.repository.js';
 import type { MessageRepository } from '../repositories/message.repository.js';
 import type { StatusChangeRepository } from '../repositories/status-change.repository.js';
 import { AppError } from '../utils/errors.js';
 import type { WebSocketHub } from '../ws/hub.js';
 import type { AgentService } from './agent.service.js';
+// 파생 로직(deriveSyncStatus)만 가져온다 — ArtifactService 인스턴스를 주입받지
+// 않으므로 "허용된 Service 간 의존 4건"을 늘리지 않는다(순수 함수 import는
+// DB·상태에 접근하지 않아 Service 간 호출 그래프에 간선을 추가하지 않는다).
+// 3NF 파생 규칙(DES-003 §4-4)의 단일 원본은 artifact.service.ts 하나뿐이어야
+// 하므로, 여기서 같은 로직을 복제하지 않고 그 함수를 그대로 재사용한다.
+import { deriveSyncStatus } from './artifact.service.js';
 
 /**
  * ApprovalService (FR-028 · FR-030)
@@ -71,10 +78,36 @@ import type { AgentService } from './agent.service.js';
  *    규칙과 같은 이유로 WS 브로드캐스트도 트랜잭션 밖에서 한다 — approvals
  *    자체(승인 기록)의 원자성이 최우선이고, Agent 쪽 부수 효과는 일반적인
  *    await 호출로 실패 시 정상적으로 예외가 전파되게 둔다.
+ *
+ * 5) `ArtifactRepository`도 같은 원칙으로 직접 주입받는다(Layer 2-9). 승인
+ *    상세(`ApprovalDetail.artifacts`)를 조립하려면 산출물 코드 배열을 실제
+ *    행으로 펼쳐야 하는데, `ApprovalService → ArtifactService`는 "허용된
+ *    Service 간 의존 4건"(`Stage→Approval→Agent→Conversation`)에 없다.
+ *    Layer 2-7(`PhaseService`가 집계를 위해 Repository를 직접 읽은 선례)과
+ *    같은 판단이다 — 읽기 전용 조회는 Service 계층을 거치지 않고
+ *    Repository를 직접 주입받는다.
  */
 
-/** 승인함 조회 시 artifacts 코드를 최소 스텁으로 편다 — ArtifactService(2-9)가 아직 없다 */
-function toArtifactStub(code: string): ArtifactRef {
+/** `ArtifactRow` → `ArtifactRef` (승인 상세 `artifacts` 필드) */
+function toArtifactRef(row: ArtifactRow): ArtifactRef {
+  return {
+    code: row.code,
+    title: row.title,
+    notionUrl: row.notion_url,
+    gitPath: row.git_path,
+    syncStatus: deriveSyncStatus(row.notion_url, row.git_path),
+  };
+}
+
+/**
+ * `approvals.artifacts`에 저장된 코드가 `artifacts` 테이블에 없을 때의
+ * 표시값 (개발 지시 §3 — "코드에 해당하는 artifact 행이 없으면 빈 필드로
+ * 두되 syncStatus='missing'"). 조회 실패로 승인 상세 전체가 깨지면 안
+ * 되므로 예외를 던지지 않고 이 값으로 채운다 — 아직 산출물 행이 생성되기
+ * 전에 승인이 먼저 상정되는 순서(승인 요청 시점에 문서가 없을 수 있다)를
+ * 정상 경로로 취급한다.
+ */
+function toMissingArtifactRef(code: string): ArtifactRef {
   return { code, title: code, notionUrl: null, gitPath: null, syncStatus: SyncStatus.MISSING };
 }
 
@@ -101,12 +134,26 @@ function toSummary(row: ApprovalRow): ApprovalSummary {
   };
 }
 
-function toDetail(row: ApprovalRow): ApprovalDetail {
+/**
+ * §3 스텁 교체 — `approvals.artifacts`(코드 문자열 배열)를 실제 `artifacts`
+ * 행으로 펼친다. `artifactRepo`를 인자로 받는 이유는 `ApprovalRepository`를
+ * 직접 만지지 않는다는 규칙과 같은 이유로 이 함수를 모듈 스코프 순수
+ * 함수로 유지하기 위해서다 — 인스턴스 메서드로 바꾸면 `toSummary` 등
+ * 주변 순수 함수들과 스타일이 갈린다. 코드에 대응하는 행이 없으면
+ * `toMissingArtifactRef`로 채운다 — 조회 실패로 승인 상세 전체가 깨지지
+ * 않는다.
+ */
+function toDetail(row: ApprovalRow, artifactRepo: ArtifactRepository): ApprovalDetail {
   const artifactCodes = parseJson<string[]>(row.artifacts) ?? [];
+  const found = new Map(artifactRepo.findByCodes(artifactCodes).map((a) => [a.code, a]));
+
   return {
     ...toSummary(row),
     options: parseJson<ApprovalOption[]>(row.options) ?? [],
-    artifacts: artifactCodes.map(toArtifactStub),
+    artifacts: artifactCodes.map((code) => {
+      const artifact = found.get(code);
+      return artifact ? toArtifactRef(artifact) : toMissingArtifactRef(code);
+    }),
     rationale: row.rationale,
     impact: parseJson<ApprovalImpact>(row.impact),
     messageId: row.message_id,
@@ -137,6 +184,7 @@ export class ApprovalService {
     private readonly messageRepo: MessageRepository,
     private readonly conversationRepo: ConversationRepository,
     private readonly agentRepo: AgentRepository,
+    private readonly artifactRepo: ArtifactRepository,
     private readonly agentService: AgentService,
     private readonly hub: WebSocketHub,
   ) {}
@@ -245,7 +293,7 @@ export class ApprovalService {
     await this.transitionRequesterStatus(input.requestedBy, AgentStatus.WAITING, waitingReason);
 
     this.hub.broadcastGlobal({ event: 'approval:created', data: toSummary(row) });
-    return toDetail(row);
+    return toDetail(row, this.artifactRepo);
   }
 
   /** FR-028 — 목록. `sort` 기본값은 'deadline'(DES-002 §5) */
@@ -264,7 +312,7 @@ export class ApprovalService {
     if (!row) {
       throw new AppError(404, ErrorCode.APPROVAL_NOT_FOUND, `승인 건을 찾을 수 없습니다: ${id}`);
     }
-    return toDetail(row);
+    return toDetail(row, this.artifactRepo);
   }
 
   /**
@@ -345,13 +393,13 @@ export class ApprovalService {
     // rejected — Agent는 waiting 유지. 사유는 위에서 기록한 MSG-01로 전달된다
 
     this.hub.broadcastGlobal({ event: 'approval:updated', data: toSummary(updated) });
-    return toDetail(updated);
+    return toDetail(updated, this.artifactRepo);
   }
 
   /** DES-004 §16 — StageService.start()의 게이트 검증이 조회한다(StageRepository를 직접 만지지 않는다) */
   async findGateApproval(stageId: string): Promise<ApprovalDetail | null> {
     const row = this.approvalRepo.findLatestGateByStage(stageId);
-    return row ? toDetail(row) : null;
+    return row ? toDetail(row, this.artifactRepo) : null;
   }
 
   /** 스케줄러(ApprovalTimeoutJob) 전용 — §17 */
@@ -408,7 +456,7 @@ export class ApprovalService {
 
     await this.transitionRequesterStatus(updated.requested_by, AgentStatus.RUNNING, null);
     this.hub.broadcastGlobal({ event: 'approval:updated', data: toSummary(updated) });
-    return toDetail(updated);
+    return toDetail(updated, this.artifactRepo);
   }
 
   /**
