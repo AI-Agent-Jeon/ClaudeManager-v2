@@ -1617,7 +1617,7 @@ function getAllowedTransitions(entityType: EntityType, fromStatus: string): stri
 
 ---
 
-## 미해결 사항
+## 미해결 사항 (해소 이력 포함)
 
 | 항목 | 내용 | 등급 | 처리 시점 |
 |------|------|:---:|----------|

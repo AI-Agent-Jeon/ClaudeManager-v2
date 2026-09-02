@@ -1,7 +1,7 @@
 # DES-005 스토리보드
 
 > Phase 1: 기반 구축
-> 버전: v2.1 (2026-08-24)
+> 버전: **v3 (2026-09-02)** — 시나리오 5 → 7개 (대화·승인 게이트 추가)
 > **원본**: [Notion DES-005](https://app.notion.com/p/3c5d066504ec81578aa5ff31e91f318a) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -398,6 +398,84 @@ $ cm project list
 
 ---
 
+## 시나리오 6: Main에게 지시하고 위임받기 — **v2 신규 (D-09)**
+
+### 내러티브 (Layer 1)
+
+대표는 새 요구사항이 생겼다. 어떤 스킬을 써야 하는지, Agent를 몇 개 띄워야 하는지는 모른다. **그냥 말로 하고 싶다.**
+
+`cm chat main`으로 Main과의 대화를 연다. 요구사항을 자연어로 적으면 Main이 스킬을 탐색해 제안하고, 대표가 수락하면 Agent를 만들어 위임한다. 대표는 Agent가 만들어진 것을 대화에서 확인하고, 그 Agent의 채널로 옮겨 진행을 지켜본다.
+
+**핵심**: 대표는 CLI 명령을 외우지 않아도 된다. Main이 명령을 대신 판단한다.
+
+### 핵심 순간 (Layer 2)
+
+| # | 순간 | 화면 | 대표가 보는 것 |
+|:---:|------|------|--------------|
+| 1 | 대화 진입 | SCR-CH01 | CH-MAIN 최근 메시지 20건 + REPL 프롬프트 `>`. 메시지가 0건이면 "무엇을 만들까요?" + 예시 3개 |
+| 2 | 요구사항 발화 | SCR-CH01 | 우측 정렬 `[대표]` 1행 + 전송 표시. `MSG-01`로 저장된다 |
+| 3 | Main 응답 | SCR-CH01 | 좌측 `[Main]` `MSG-02` — 탐색한 스킬, 제안 이유, 예상 산출물 |
+| 4 | 위임 실행 | SCR-CH01 | `MSG-02` — 생성된 Agent 이름·ID, 배정 스킬, **CH-AGENT 개설 알림** |
+| 5 | Agent 채널 이동 | SCR-CH02 | Agent명 채널. Agent 상태 + `waiting_reason`. 첫 `MSG-03` 보고 대기 |
+| 6 | 첫 보고 수신 | SCR-CH02 | `MSG-03` **4단 접기** — 요약·수행내용·산출물·미해결. 산출물 경로는 `MSG-06` 링크로 별도 |
+
+> **Agent 생성 = 채널 개설이다.** 4번에서 Agent만 만들어지고 채널이 없으면 5번이 성립하지 않는다. 두 동작은 한 트랜잭션이다 (DES-004 v2.2 §7).
+
+### 분기점 (Layer 3)
+
+| 분기 | 조건 | 결과 | 복구 |
+|------|------|------|------|
+| 정상 | CH-MAIN 존재 | 대화 진행 | - |
+| **CH-MAIN 없음** | 부트스트랩 미실행 | `404 CONVERSATION_NOT_FOUND` | 서버 재기동 — `ready` 훅이 멱등 시드한다 (R-01) |
+| WS 끊김 | 네트워크·서버 재시작 | ⚠ 재연결 중… (지수 백오프) | 복구 시 **REST로 누락 보충**. 서버는 버퍼링하지 않는다 |
+| 채널 읽기 전용 | Agent `completed`/`cancelled` | `409 CONVERSATION_ARCHIVED` | 조회·검색은 가능. 새 Agent를 만든다 |
+
+---
+
+## 시나리오 7: 승인 게이트 통과 — **v2 신규 (D-16)**
+
+### 내러티브 (Layer 1)
+
+`plan` 단계가 끝났다. CLAUDE.md는 `plan → analyze`를 **승인 필수**로 규정한다. 대표가 승인하지 않으면 다음 단계는 시작되지 않는다.
+
+대표는 `cm progress`로 지금 어디까지 왔는지 보고, `cm review`로 무엇을 승인하는지 확인한 뒤 `cm decide`로 결정한다. 승인해도 단계가 자동으로 시작되지는 않는다 — **게이트가 열릴 뿐**이고, 착수는 `cm stage start`로 대표가 한다.
+
+**핵심**: "모르는 채 누르는" 상태를 만들지 않는다. 승인 전에 산출물·근거·영향 범위를 본다.
+
+### 핵심 순간 (Layer 2)
+
+| # | 순간 | 화면 | 대표가 보는 것 |
+|:---:|------|------|--------------|
+| 1 | 진행 확인 | SCR-CH06 | Phase 1 · 7단계 상태 · 산출물 건수 · **게이트 2곳 위치와 통과 여부** · WIP 위반 |
+| 2 | 승인 대기 확인 | SCR-CH04 | `APV-GATE` · 높음 · "plan → analyze 전환" · 경과 시간 · **잔여 `무기한`** |
+| 3 | 안건 검토 | SCR-CH08 | 산출물 PLN-001~005 (Git 경로 · Notion URL · **동기화 상태**), 선택지, 근거, 영향 범위(되돌림 가능 여부) |
+| 4 | 승인 | SCR-CH05 | ✓ 승인 완료 · 채택 선택지 · **Agent 재개** · 다음 단계명 + `cm stage start analyze` 안내 |
+| 5 | 단계 착수 | SCR-CH09 | 3단 가드 통과(직전 완료 · 게이트 승인 · WIP) → `pending → in_progress` |
+| 6 | 기록 확인 | SCR-CH02 | 대표 결정이 `MSG-01`로 대화에 남아 있다 — 승인함에서 눌렀든 CLI로 했든 동일 |
+
+> **승인과 착수는 다른 동작이다.** 승인은 `approvals`만 바꾸고 `stages`는 건드리지 않는다. 착수 전이는 `POST /api/stages/:id/start`의 3단 검증을 지나야만 일어난다 (R-03).
+
+### 분기점 (Layer 3)
+
+| 분기 | 조건 | 결과 | 복구 |
+|------|------|------|------|
+| 정상 | 게이트 승인됨 | 다음 단계 `in_progress` | - |
+| **반려** | `cm decide --reject --reason` | **단계는 그대로 `pending`.** 요청 Agent는 `waiting` 유지, 사유가 `MSG-01`로 기록 | 보완 후 **새 `APV-GATE` 발행** → 다시 승인 사이클 |
+| 게이트 미통과 착수 시도 | 승인 없이 `cm stage start` | `403 GATE_NOT_PASSED` | `cm review` → `cm decide` 선행 |
+| 직전 단계 미완료 | 앞 단계가 `completed` 아님 | `422 INVALID_TRANSITION` | 앞 단계 완료 처리 |
+| WIP 위반 | 이미 다른 단계가 `in_progress` | `409 WIP_VIOLATION` | 앞 단계 완료, 또는 `cm progress --waive "<사유>"`로 면제 등록 |
+| 타임아웃 자동 진행 시도 | `APV-GATE`에 스케줄러 접근 | **차단** — `APV-GATE`는 `high` 고정이라 `deadline_at`이 NULL이라 조회에 잡히지 않고, 잡 내부에서 한 번 더 검사 | - |
+
+---
+
+## 시나리오 8: 모바일 페어링과 원격 승인 — **⏸️ Phase 2**
+
+터널링(D-19 · D-29)이 비용 제약으로 Phase 2로 연기되어 **원격 접속 자체가 Phase 2 사안**이다. `cm pair` · `cm devices` 명령과 이 시나리오는 Phase 2 착수 시 작성한다.
+
+Phase 1은 `127.0.0.1` 루프백 전용이므로 이 흐름이 성립하지 않는다.
+
+---
+
 ## CLI 명령어 전체 맵
 
 ```
@@ -418,29 +496,49 @@ cm
 │   ├── create        # --agent, --title, --description
 │   ├── list          # --agent 필수
 │   └── status <id>   # 조회 또는 --set <status>로 변경
-└── status-changes    # --entity-type, --entity-id
+├── status-changes    # --entity-type, --entity-id
+│
+├── chat              # ── 대화 (D-09 · D-27) ──
+│   ├── main          # Main과 대화 (REPL)              SCR-CH01
+│   ├── agent <id>    # Agent와 대화 (REPL)             SCR-CH02
+│   ├── send          # 비대화형 1회 전송                SCR-CH03
+│   ├── list          # 채널 목록 (--type, --status)     SCR-CH11
+│   ├── log <id>      # 대화 본문 출력 (--since)         SCR-CH12
+│   └── search        # 전 채널 전문 검색 (FTS5)         SCR-CH13
+│
+├── inbox             # 미응답 의사결정 목록             SCR-CH04
+├── decide <id>       # --approve | --reject --reason    SCR-CH05
+├── approvals         # 승인함 (--pending|--resolved)    SCR-CH07
+├── review <id>       # 승인 건 상세 (안건·산출물·근거)   SCR-CH08
+│
+├── progress          # Phase 진행 보드 + WIP 검사       SCR-CH06
+│                     #   --waive "<사유>"로 면제 등록
+├── stage start <skill>  # 단계 착수 (3단 게이트 검증)   SCR-CH09
+└── artifacts         # 산출물 + 동기화 상태 (--sync)    SCR-CH10
 ```
+
+> **Phase 2 예정**: `cm pair` · `cm devices` (페어링 — D-19 터널링 연기로 Phase 2)
 
 ---
 
-## ⚠ 2026-09-01 승인 반영 필요
+## ✅ 2026-09-01 승인 반영 완료 (2026-09-02)
 
-승인된 결정에 따라 **CLI 명령군이 크게 늘어난다.** 신규 시나리오 작성이 필요하다.
+승인된 결정에 따라 CLI 명령군이 늘었고, 그에 대응하는 시나리오를 작성했다.
 
-| 신규 명령군 | 명령 | 근거 |
-|------------|------|------|
-| 대화 | `cm chat main`, `cm chat agent <id>`, `cm chat send`, `cm chat list`, `cm chat log`, `cm chat search` | D-09, D-27 |
-| 승인 | `cm inbox`, `cm decide <id> --approve\|--reject`, `cm approvals`, `cm review <id>` | D-14, D-16 |
-| 진행 | `cm progress` | D-16 |
-| 페어링 | `cm pair`, `cm devices` | D-19 |
+| 신규 명령군 | 명령 | Phase | 근거 |
+|------------|------|:---:|------|
+| 대화 | `cm chat main`, `cm chat agent <id>`, `cm chat send`, `cm chat list`, `cm chat log`, `cm chat search` | **1** | D-09, D-27 |
+| 승인 | `cm inbox`, `cm decide <id> --approve\|--reject`, `cm approvals`, `cm review <id>` | **1** | D-14, D-16 |
+| 진행 | `cm progress`, `cm stage start <skill>`, `cm artifacts` | **1** | D-16 |
+| 페어링 | `cm pair`, `cm devices` | ⏸️ **2** | D-19 — 터널링 연기 |
 
-### 신규 시나리오 (작성 예정)
+### 시나리오 작성 현황
 
-| # | 시나리오 | 내용 |
+| # | 시나리오 | 상태 |
 |---|---------|------|
-| 6 | Main에게 지시하고 위임받기 | 요구사항 입력 → 스킬 제안 → Agent 생성·위임 |
-| 7 | 승인 게이트 통과 | `plan→analyze` 게이트 도달 → `cm review` → `cm decide --approve` → 다음 단계 착수 |
-| 8 | 모바일 페어링과 원격 승인 | `cm pair` → 폰에서 링크 접속 → 알림 켜기 → 외부에서 승인 |
+| 6 | Main에게 지시하고 위임받기 | ✅ **작성 완료** — 요구사항 입력 → 스킬 제안 → Agent 생성·위임 → CH-AGENT 이동 |
+| 7 | 승인 게이트 통과 | ✅ **작성 완료** — `cm progress` → `cm review` → `cm decide --approve` → `cm stage start` |
+| 8 | 모바일 페어링과 원격 승인 | ⏸️ **Phase 2** — 터널링 연기로 원격 접속 자체가 Phase 2 사안 |
 
 ---
 
@@ -451,4 +549,5 @@ cm
 | v1 | 2026-08-23 | 최초 작성 (Phase 1 — CLI 시나리오 2개) |
 | v2 | 2026-08-24 | 5개 시나리오로 확장, CLI 명령/출력 예시 상세화, E2E 흐름 추가 |
 | v2.1 | 2026-08-24 | 설계 검토 반영: Task 상태 전이 `in_review` 경유 추가, 토큰 경로 통일, JWT 만료 7d로 수정 |
+| **v3** | 2026-09-02 | **시나리오 5 → 7개.** CLI 명령이 19 → 32화면으로 늘었는데 시나리오는 v2.1(5건) 그대로여서, 신규 명령군 13개를 관통하는 흐름이 없었다.<br>**시나리오 6 신설** — Main에게 지시하고 위임받기(D-09). Agent 생성 = 채널 개설이 한 트랜잭션임을 핵심 순간에 명시.<br>**시나리오 7 신설** — 승인 게이트 통과(D-16). **승인과 착수가 다른 동작**임을 명시(승인은 게이트만 열고, 착수는 3단 검증을 지난다 — R-03). 반려 시 단계가 `pending`에 머무는 분기 포함.<br>**시나리오 8은 Phase 2로 명시** — 터널링 연기로 원격 접속 자체가 Phase 2.<br>CLI 명령어 전체 맵에 13화면 반영 + 화면 ID 매핑, `cm pair`·`cm devices`를 Phase 2로 분리 |
 | — | 2026-09-01 | **Git 동기화** + 승인 반영 신규 명령군·시나리오 6~8 예정 표기 |
