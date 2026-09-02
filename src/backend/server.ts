@@ -1,5 +1,8 @@
 import { SHUTDOWN_TIMEOUT_MS } from '../shared/constants.js';
 import { buildApp } from './app.js';
+import { buildBootstrapService } from './bootstrap/bootstrap.service.js';
+import { ApprovalTimeoutJob } from './jobs/approval-timeout.job.js';
+import { buildApprovalService } from './routes/approvals.routes.js';
 
 /**
  * 서버 진입점 — listen + Graceful Shutdown
@@ -27,9 +30,15 @@ async function main(): Promise<void> {
     );
   }
 
-  // 5단계 BootstrapService.seed() — Layer R-1에서 여기에 들어간다.
-  //    CH-MAIN·Phase 1·7단계 멱등 시드. 실패하면 listen하지 않고 종료한다 (R-01).
-  // 6단계 ApprovalTimeoutJob.start() — Layer R-2.
+  // 5단계 — CH-MAIN·Phase 1·7단계 멱등 시드 (R-01). 실패하면 아래 catch(main() 바깥)로
+  // 던져 listen하지 않고 종료한다 — 반쪽으로 도는 서버보다 즉시 드러나는 편이 낫다.
+  const bootstrapService = buildBootstrapService(app);
+  await bootstrapService.seed();
+
+  // 6단계 — 타임아웃 자동 진행 스케줄러 시작 (R-02). 시드 완료 후여야 한다 —
+  // 조회 대상 테이블(phases·stages)이 비어 있으면 안 된다.
+  const approvalTimeoutJob = new ApprovalTimeoutJob(buildApprovalService(app), app.log);
+  approvalTimeoutJob.start();
 
   // 7단계
   await app.listen({ host, port });
@@ -51,8 +60,8 @@ async function main(): Promise<void> {
     timer.unref();
 
     try {
-      // ApprovalTimeoutJob.stop()이 여기 맨 앞에 들어간다 (Layer R-2).
-      // DB를 닫은 뒤 tick이 돌면 연결 오류가 난다 — 순서가 중요하다.
+      // 가장 먼저 잡을 멈춘다 (R-02) — DB를 닫은 뒤 tick이 돌면 연결 오류가 난다.
+      approvalTimeoutJob.stop();
 
       // app.close()가 onClose 훅을 등록 역순으로 실행한다:
       //   WS 소켓 정리(1001) → DB 종료

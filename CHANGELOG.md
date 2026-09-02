@@ -79,6 +79,23 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 - `ArtifactRepository` — `findById()`·`findByCode()`·`findByCodes()`(코드 배열 일괄 조회, 빈 배열은 쿼리 없이 빈
   배열)·`findMany()`(`syncStatus` 4분기를 SQL `WHERE` 조건으로 번역하는 `SYNC_STATUS_CLAUSE`)·`upsert()`(`ON
   CONFLICT(code) DO UPDATE`, `status`는 SET 절에 없어 갱신 시 유지된다)
+- **서버 기동 부트스트랩 (`FR-026`·`FR-029`, Layer R-1)** — `BootstrapService.seed()`가 CH-MAIN 채널·Phase 1(`기반
+  구축`)·7단계를 멱등 시드한다(전부 `ConversationService.ensureMainChannel()`·`PhaseService.ensurePhase()` 경유,
+  Repository 직접 접근 없음 — 레이어 규칙 7). 순서 고정 — `conversations` → `phases`(+`stages`, `stages.phase_id`가
+  `phases`를 참조). 셋 다 `ON CONFLICT DO NOTHING` 계열이라 매 기동마다 실행해도 안전하다. `server.ts`가 마이그레이션
+  이후·`ApprovalTimeoutJob.start()`·`listen()` 이전에 호출하고, 실패하면 예외가 `main().catch()`까지 그대로 전파돼
+  listen 없이 기동을 중단한다. `buildApp()` 자체는 시드를 호출하지 않는다 — 각 라우트 테스트가 이미 `POST
+  /api/phases`·`seedMainChannel` 픽스처로 직접 상태를 구성하므로, 모든 테스트에서 자동 시드되면 "Phase 없음 →
+  404" 같은 기존 회귀가 깨진다. 연속 3회 호출해도 CH-MAIN 1행·Phase 1행·stages 7행만 남는 멱등성 테스트가 핵심 방어선
+- **타임아웃 자동 진행 스케줄러 (`D-10`, Layer R-2)** — `ApprovalTimeoutJob`이 ADR-012로 확정된 대로 Fastify 프로세스
+  내부 `setInterval`(60초, `APPROVAL_JOB_INTERVAL_MS`)로 `ApprovalService.findExpired()`→`autoAdvance()`를 호출한다.
+  이전 tick이 끝나지 않았으면 새 tick을 건너뛰고(`ticking` 플래그), 만료 건 하나가 실패해도(`APV-GATE` 이중 방어 ②
+  포함) 로깅 후 다음 건으로 진행하며, `findExpired()` 자체가 실패해도 tick 예외를 삼켜 서버를 죽이지 않는다. `high`는
+  `deadline_at`이 NULL이라 조회 조건에서 자동 제외되고, `APV-GATE`는 그 조건과 별개로 DB CHECK 제약(마이그레이션 004
+  `NOT (level='high' AND deadline_at IS NOT NULL)`·`NOT (approval_type='APV-GATE' AND level<>'high')`)이 애초에
+  `deadline_at` 있는 GATE 행 생성 자체를 막는다 — 조회 조건·잡 내부 유형 재검사·DB 스키마까지 3단 방어. `server.ts`가
+  `BootstrapService.seed()` 완료 후 `start()`, Graceful Shutdown에서 가장 먼저 `stop()`을 호출한다(DB 종료보다 먼저
+  멈춰야 tick이 닫힌 연결에 쓰지 않는다)
 
 ### Changed
 
@@ -131,9 +148,6 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 ### 미반영 (Phase 1 잔여)
 
 - WebSocket 엔드포인트 (`WS /ws`, `WS /ws/conversations/:id`) — Hub만 구현됨. `approval:created`·`approval:updated` 브로드캐스트 호출은 있으나 실제 소켓 라우트 배선은 다음 계층
-- `ApprovalTimeoutJob`(60초 주기 스케줄러) — `ApprovalService.findExpired()`/`autoAdvance()`는 구현됐고 Job이 이를 호출하기만 하면 된다
-- 서버 기동 부트스트랩(R-01, CH-MAIN·Phase 1 시드) — 아직 없어 테스트가 `seedMainChannel`·`seedPhase` 픽스처로 직접 만든다
-  (`PhaseService`·`StageService`는 Layer 2-7·2-8에서, `ArtifactService`는 Layer 2-9에서 이미 구현됨 — Layer 2 전 계층 완료)
 - CLI (`cm approvals`, `cm decide` 등)
 - FTS5 한국어 토크나이저 미확정 — `unicode61`은 조사가 붙은 어절을 원형으로 못 찾는다. `trigram`과 실데이터 비교 후 확정
 - Graceful Shutdown이 단위 테스트 커버리지에서 제외됨 — 통합 테스트에서 다뤄야 한다
