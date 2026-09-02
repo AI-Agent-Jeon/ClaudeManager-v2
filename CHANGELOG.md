@@ -38,6 +38,12 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 - `POST /api/approvals` · `GET /api/approvals` · `GET /api/approvals/:id` · `POST /api/approvals/:id/resolve` (R-07)
 - `DELETE /api/agents/:id`가 승인 마감과 Agent 삭제를 `db.transaction()`으로 조율해 실제 `closedApprovalCount`를 반환 (R-04)
 - `AgentService.updateStatus()`에 `waitingReason` 3번째 인자 추가 — 승인 요청 시 사유(`ceo_approval`/`ceo_decision`)를 함께 전이
+- Phase 진행 추적·WIP (`FR-029`) — `PhaseService.create()`(Phase + 7단계를 한 트랜잭션으로 생성, `number` 중복/`<1` 검증) ·
+  `ensurePhase()`(부트스트랩 전용 멱등 생성, R-01이 이후 계층에서 호출) · `getCurrent()`(진행 중 Phase 없으면 404) ·
+  `checkWip()`(저장하지 않고 조회 시점 계산, 면제가 있어도 위반은 계속 보고) · `createWaiver()`(사유 빈 문자열·공백 모두 거부)
+- `GET /api/phases/current` · `POST /api/phases` · `POST /api/wip-waivers` — `artifactCount`·`pendingApprovalCount`·`gate`는
+  `PhaseRepository`가 JOIN(윈도 함수로 단계별 최신 APV-GATE 승인만 선택)으로 한 쿼리에 집계해 N+1을 피한다.
+  `gate.required`는 저장하지 않고 CLAUDE.md 스킬 전환 모드에서 파생(`plan`·`test` 단계만 true, DES-002 §5 예시 근거)
 
 ### Changed
 

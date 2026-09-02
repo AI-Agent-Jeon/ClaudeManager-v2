@@ -8,6 +8,7 @@ import { registerApprovalRoutes } from './routes/approvals.routes.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerConversationRoutes } from './routes/conversations.routes.js';
 import { registerHealthRoutes } from './routes/health.routes.js';
+import { registerPhaseRoutes } from './routes/phases.routes.js';
 import { registerProjectRoutes } from './routes/projects.routes.js';
 import { registerStatusChangeRoutes } from './routes/status-changes.routes.js';
 import { registerTaskRoutes } from './routes/tasks.routes.js';
@@ -62,6 +63,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerStatusChangeRoutes(app);
   registerConversationRoutes(app);
   registerApprovalRoutes(app);
+  registerPhaseRoutes(app);
 
   // 에러 응답은 4필드 고정이다 (DES-009 §HTTP 에러 응답 형식)
   app.setErrorHandler((err, request, reply) => {
