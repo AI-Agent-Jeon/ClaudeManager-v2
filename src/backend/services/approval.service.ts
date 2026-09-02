@@ -412,13 +412,20 @@ export class ApprovalService {
   }
 
   /**
-   * Agent 삭제 시 미처리 승인 자동 마감 (R-04). `agents.routes.ts`의 DELETE
-   * 핸들러가 `db.transaction()` 안에서 `agentService.delete()`보다 먼저 호출한다
-   * — 이 메서드 자체가 내부에 실제 `await` 지점이 없어(approvalRepo·
-   * statusChangeRepo 모두 동기) fire-and-forget으로 호출해도 DB 쓰기는 그
-   * 트랜잭션 안에서 완결된다.
+   * 동기 코어 — Agent 삭제 시 미처리 승인 자동 마감 (R-04).
+   *
+   * `agents.routes.ts`의 DELETE 핸들러가 `db.transaction()` 콜백 **안에서
+   * 이 메서드를 직접** 호출한다(`agentService.deleteSync()`보다 먼저). `async`
+   * 키워드가 없으므로 본문 안에 `await`를 쓰면 컴파일 자체가 되지 않는다 —
+   * "트랜잭션 콜백 안에서 안전하다"(내부에 실제 비동기 지점이 없다)는 불변조건을
+   * 주석이 아니라 타입 체커가 강제한다. `approvalRepo`·`statusChangeRepo`는
+   * 둘 다 동기라 자연스럽게 만족된다.
+   *
+   * 자체 `db.transaction()`을 한 번 더 열지만, better-sqlite3는 트랜잭션 함수를
+   * 다른 트랜잭션 함수 안에서 호출하는 것을 SAVEPOINT로 지원하므로 Route가 연
+   * 바깥 트랜잭션에 안전하게 중첩된다.
    */
-  async closeByRequester(requestedBy: string): Promise<number> {
+  closeByRequesterSync(requestedBy: string): number {
     const now = new Date().toISOString();
     const closedIds = this.db.transaction((): string[] => {
       const ids = this.approvalRepo.closePendingByRequester(requestedBy, {
@@ -441,9 +448,13 @@ export class ApprovalService {
     return closedIds.length;
   }
 
-  /** R-04 응답 구성용 사전 조회 — closeByRequester 실행 전 건수를 미리 안다 */
-  async countPendingByRequester(requestedBy: string): Promise<number> {
-    return this.approvalRepo.countPendingByRequester(requestedBy);
+  /**
+   * 공개 API — DES-004 §전체 함수 시그니처 요약의 `Promise<number>` 그대로다.
+   * 동기 코어(`closeByRequesterSync`)를 감싸는 얇은 래퍼이며, 단독 호출(트랜잭션
+   * 조율이 필요 없는 경우)에 쓴다. R-04 트랜잭션 조율에는 동기 코어를 쓴다.
+   */
+  async closeByRequester(requestedBy: string): Promise<number> {
+    return this.closeByRequesterSync(requestedBy);
   }
 
   /**

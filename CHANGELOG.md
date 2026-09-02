@@ -52,6 +52,7 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 - **Agent 생성이 트랜잭션으로 묶이지 않던 문제** — Agent만 만들어지고 채널이 없으면 `cm chat agent <id>`가 실패한다. 롤백 테스트로 강제한다
 - `status-changes` 라우트가 DB를 직접 쿼리하던 것을 Repository/Service 경유로 교정 (레이어 규칙 2)
 - `DELETE /api/agents/:id`가 `closedApprovalCount`를 항상 0으로 반환하던 것을 실제 마감 건수로 교정 (R-04)
+- **R-04 트랜잭션의 원자성이 주석에만 의존하던 문제** — `ApprovalService.closeByRequester()`·`AgentService.delete()`를 `db.transaction()` 안에서 `void`로 fire-and-forget 호출하던 구조는, 둘 다 `async`라 나중에 내부에 `await`가 하나 추가되면 그 뒤 쓰기가 커밋 이후로 밀려 원자성이 조용히 깨지고, 두 번째 호출이 거부되어도 `void`가 삼켜 unhandled rejection이 되며 트랜잭션은 그대로 커밋되는 위험이 있었다. `closeByRequesterSync()`·`deleteSync()` 동기 코어를 추출해 `DELETE /api/agents/:id`가 이를 트랜잭션 콜백 안에서 직접 호출·반환하도록 교정 — `async`가 아니므로 내부에 `await`를 쓰면 컴파일이 실패해, "트랜잭션 콜백 안에서 안전하다"는 불변조건을 타입 체커가 강제한다. 사전 조회(`countPendingByRequester`)·fire-and-forget이 모두 불필요해졌다. 두 실패 순서(승인 마감 후 Agent 삭제 실패 / 승인 마감 자체 실패) 모두 전건 롤백되는지 회귀 테스트로 검증
 
 ### Security
 

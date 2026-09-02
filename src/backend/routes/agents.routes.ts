@@ -192,32 +192,29 @@ export function registerAgentRoutes(app: FastifyInstance): void {
         },
       },
     },
-    // R-04 — 승인 마감(ApprovalService.closeByRequester)과 Agent 삭제
-    // (AgentService.delete)를 한 트랜잭션으로 조율한다. `ApprovalService →
+    // R-04 — 승인 마감(ApprovalService.closeByRequesterSync)과 Agent 삭제
+    // (AgentService.deleteSync)를 한 트랜잭션으로 조율한다. `ApprovalService →
     // AgentService`(기존)와 `AgentService → ApprovalService`를 둘 다 두면
     // 양방향 순환이 되므로, Service끼리 부르지 않고 Route가 db.transaction()
     // 으로 순서를 강제한다 (DES-004 §13 · 레이어 규칙 9).
+    //
+    // 동기 코어(`~Sync` 메서드)를 트랜잭션 콜백 안에서 직접 호출한다 — 둘 다
+    // `async`가 아니므로 내부에 `await`를 쓰면 컴파일이 실패한다("트랜잭션 콜백
+    // 안에서 안전하다"는 불변조건을 타입 체커가 강제한다). 그래서 fire-and-forget
+    // (`void`)도, 응답 값을 미리 조회하는 것도 필요 없다 — 콜백이 반환한 값을
+    // 그대로 쓴다. 둘 중 하나가 실패하면(예: 존재하지 않는 Agent) 그 예외가
+    // 동기적으로 전파되어 better-sqlite3가 트랜잭션 전체를 롤백한다
+    // (agent-delete-atomicity.test.ts가 두 실패 순서를 모두 검증한다).
     async (request): Promise<{ data: DeleteAgentResult }> => {
       const id = request.params.id;
 
-      // better-sqlite3의 db.transaction()은 동기 콜백만 지원해, 안에서는 async
-      // 서비스 메서드의 Promise 반환값을 꺼낼 수 없다(내부에 실제 await가 없어도
-      // async 함수는 항상 Promise를 반환한다). 응답 구성에 필요한 값은 실제
-      // 쓰기 직전 상태에서 미리 확보한다 — getById가 AGENT_NOT_FOUND도 검증한다.
-      const before = await service.getById(id);
-      const closedApprovalCount = await approvalService.countPendingByRequester(id);
-
-      // 실제 원자적 쓰기 — 두 메서드 모두 내부에 실제 await 지점이 없어(각
-      // 서비스 파일 주석 참조) fire-and-forget으로 호출해도 트랜잭션 콜백이
-      // 반환되기 전에 DB 쓰기가 동기적으로 완결된다.
-      app.db.transaction(() => {
-        void approvalService.closeByRequester(id);
-        void service.delete(id);
+      const result = app.db.transaction(() => {
+        const closedApprovalCount = approvalService.closeByRequesterSync(id);
+        const deleted = service.deleteSync(id);
+        return { archivedConversationId: deleted.archivedConversationId, closedApprovalCount };
       })();
 
-      return {
-        data: { archivedConversationId: before.conversationId, closedApprovalCount },
-      };
+      return { data: result };
     },
   );
 }

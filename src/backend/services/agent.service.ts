@@ -260,26 +260,27 @@ export class AgentService {
   }
 
   /**
-   * FR-007 — Agent 삭제는 대화를 보존한다 (D-27 · DES-004 §13).
-   * 순서: ① 스냅샷(행이 살아있을 때) ② 대화 아카이브 ③ Agent 삭제.
+   * 동기 코어 — Agent 삭제(D-27 · DES-004 §13). 순서: ① 스냅샷(행이 살아있을
+   * 때) ② 대화 아카이브 ③ Agent 삭제.
    *
    * `closedApprovalCount`는 이 메서드 안에서는 항상 0이다 — 실제 마감(R-04)은
-   * ApprovalService.closeByRequester()(Layer 2-6)의 몫이다. AgentService가
+   * `ApprovalService.closeByRequesterSync()`(Layer 2-6)의 몫이다. AgentService가
    * ApprovalService를 부르면 `ApprovalService → AgentService`(기존, 승인 처리 시
    * Agent 전이)와 양방향 순환이 된다. 그래서 `agents.routes.ts`의 DELETE
-   * 핸들러가 `db.transaction()` 안에서 `approvalService.closeByRequester(id)` →
-   * `agentService.delete(id)` 순으로 호출하고, 실제 건수로 이 필드를 덮어써
-   * 응답을 구성한다 (DES-004 §13 · 레이어 규칙 9).
+   * 핸들러가 `db.transaction()` 콜백 **안에서 두 동기 코어를 직접** 호출하고
+   * (`closeByRequesterSync(id)` → `deleteSync(id)` 순), 실제 건수로 이 필드를
+   * 덮어써 응답을 구성한다 (DES-004 §13 · 레이어 규칙 9).
    *
-   * ⚠ 대화 아카이브를 `conversationService.archiveByEntity`에 `await`로 위임하지
-   * 않는다. R-04 트랜잭션이 이 메서드를 `db.transaction()` 안에서 fire-and-forget
-   * (`void`)으로 호출하므로, 내부에 `await` 지점이 있으면 그 뒤 코드
-   * (`agentRepo.deleteById`)가 트랜잭션 밖(커밋 이후)으로 밀려 원자성이 깨진다
-   * (agent-atomicity.test.ts가 지키는 것과 같은 전제). 그래서 채널을 미리
-   * `conversationRepo`로 동기 조회해 id를 확보하고, 아카이브 자체도
-   * `conversationRepo.archiveWithSnapshot`을 직접(동기) 호출한다.
+   * `async`가 아닌 이유가 곧 원자성 근거다 — better-sqlite3의 `db.transaction()`
+   * 은 동기 콜백만 지원한다. 이 메서드에 `async`를 붙이면 본문에 `await`를 넣는
+   * 실수가 컴파일을 통과해버리고, 그 순간 뒤따르는 쓰기(`agentRepo.deleteById`)가
+   * 트랜잭션 밖(커밋 이후)으로 밀려 원자성이 조용히 깨진다. 동기로 남겨두면
+   * `await`를 쓰는 순간 타입 에러가 나 컴파일이 실패한다 — 그래서
+   * `conversationService.archiveByEntity`(await 필요)를 거치지 않고
+   * `conversationRepo`를 직접(동기) 쓴다. `agent-atomicity.test.ts`·
+   * `agent-delete-atomicity.test.ts`가 이 전제를 회귀 테스트로 지킨다.
    */
-  async delete(id: string): Promise<DeleteAgentResult> {
+  deleteSync(id: string): DeleteAgentResult {
     const row = this.agentRepo.findById(id);
     if (!row) {
       throw new AppError(404, ErrorCode.AGENT_NOT_FOUND, `Agent를 찾을 수 없습니다: ${id}`);
@@ -316,6 +317,15 @@ export class AgentService {
     this.agentRepo.deleteById(id);
 
     return { archivedConversationId: conv.id, closedApprovalCount: 0 };
+  }
+
+  /**
+   * 공개 API — DES-004 §전체 함수 시그니처 요약의 `Promise<DeleteAgentResult>`
+   * 그대로다. 동기 코어(`deleteSync`)를 감싸는 얇은 래퍼이며, 단독 호출(트랜잭션
+   * 조율이 필요 없는 경우)에 쓴다. R-04 트랜잭션 조율에는 동기 코어를 쓴다.
+   */
+  async delete(id: string): Promise<DeleteAgentResult> {
+    return this.deleteSync(id);
   }
 
   private cascadeToTasks(agentId: string, agentNewStatus: AgentStatus, now: string): void {
