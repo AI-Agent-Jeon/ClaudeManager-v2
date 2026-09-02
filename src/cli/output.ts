@@ -73,6 +73,42 @@ export function paginationFooter(pagination: Pagination, filters: string[] = [])
   return lines.join('\n');
 }
 
+/**
+ * 총 건수만 (+ 적용 필터) — Layer 3-2 그룹 B 추가.
+ *
+ * `GET /api/conversations`·`/search`는 `pagination` 객체를 돌려주지 않는다
+ * (ConversationService.list·search의 반환 타입이 배열이다 — DES-004 §전체
+ * 함수 시그니처 요약). `paginationFooter`는 `Pagination`(page·totalPages
+ * 포함)을 요구해 여기 못 쓴다. 목록 3종(project·agent·task)의 페이지 푸터는
+ * 그대로 두고, 페이지네이션이 없는 목록 전용으로 별도 함수를 추가한다.
+ */
+export function totalFooter(total: number, filters: string[] = []): string {
+  const lines = [`총 ${total}건`];
+  for (const f of filters) lines.push(`filtered by: ${f}`);
+  return lines.join('\n');
+}
+
+/**
+ * ANSI dim — SCR-CH11 "archived는 dim"(DES-006 §3-1·EVT-CH11-1). 색상을
+ * 지원하지 않는 파이프·리다이렉션 환경에서도 코드는 무해하게 그대로
+ * 지나간다(대부분의 터미널·페이저가 SGR을 무시하거나 다음 리셋까지만
+ * 적용한다). ID·상태 값 자체는 바꾸지 않는다 — 잘라내거나 치환하지 않고
+ * 감싸기만 한다.
+ */
+export function dim(text: string): string {
+  return `\x1b[2m${text}\x1b[0m`;
+}
+
+/**
+ * FTS5 `snippet()`이 내려주는 `<mark>…</mark>`를 터미널 강조(굵게)로 바꾼다
+ * (SCR-CH13 "snippet → 터미널 강조"). HTML을 렌더링하는 게 아니라 이
+ * 두 태그만 치환한다 — 검색어 외 임의 HTML이 본문에 섞여 들어올 경로가
+ * 없다(FTS5가 매칭 구간에만 태그를 삽입한다).
+ */
+export function highlightMark(text: string): string {
+  return text.replaceAll('<mark>', '\x1b[1m').replaceAll('</mark>', '\x1b[0m');
+}
+
 /** §8 출력 형식 — 성공 요약 */
 export function successBlock(headline: string, body?: string): string {
   return body ? `✓ ${headline}\n\n${body}` : `✓ ${headline}`;

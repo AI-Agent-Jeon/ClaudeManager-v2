@@ -91,6 +91,51 @@ export class ApiClient {
     return this.send<T>('DELETE', path);
   }
 
+  /**
+   * JSON 파싱 없이 원문 텍스트를 그대로 돌려준다.
+   *
+   * `GET /api/conversations/:id/export`는 이 코드베이스에서 **유일하게**
+   * `{data:...}` 봉투를 쓰지 않고 `text/markdown`을 그대로 응답한다
+   * (DES-002 §4). `send()`는 항상 `JSON.parse`를 시도하고 실패하면
+   * `undefined`로 삼키므로(`parseJsonSafely`), 마크다운 본문을 그 경로로
+   * 받으면 내용이 통째로 사라진다. 에러 응답(4xx)은 다른 엔드포인트와
+   * 동일하게 JSON 에러 봉투이므로 그 경로는 `send()`와 같은 방식으로
+   * 처리한다.
+   */
+  async getText(path: string): Promise<string> {
+    const headers: Record<string, string> = { accept: 'text/markdown, application/json' };
+    if (this.token) headers.authorization = `Bearer ${this.token}`;
+
+    let res: Dispatcher.ResponseData;
+    try {
+      res = await request(`${this.baseUrl}${path}`, {
+        method: 'GET',
+        headers,
+        dispatcher: this.dispatcher,
+      });
+    } catch (cause) {
+      if (isConnectionRefused(cause)) {
+        throw new ServerUnreachableError(this.baseUrl);
+      }
+      throw cause;
+    }
+
+    const text = await res.body.text();
+
+    if (res.statusCode >= 400) {
+      const json = parseJsonSafely(text);
+      const err = (json ?? {}) as Partial<ErrorResponse>;
+      throw new ApiRequestError(
+        err.statusCode ?? res.statusCode,
+        err.code ?? ErrorCode.INTERNAL_ERROR,
+        err.message ?? '알 수 없는 오류가 발생했습니다',
+        err.details,
+      );
+    }
+
+    return text;
+  }
+
   private async send<T>(method: Method, path: string, body?: unknown): Promise<T> {
     const headers: Record<string, string> = { accept: 'application/json' };
     if (body !== undefined) headers['content-type'] = 'application/json';

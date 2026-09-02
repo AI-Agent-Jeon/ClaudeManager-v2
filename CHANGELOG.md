@@ -149,6 +149,45 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   `AGENT_NOT_FOUND`이거나 목록 필터가 조용히 0건이 되는 문제가 있었다 — 실제 백엔드를 띄워 14개 명령을
   손으로 돌리는 과정(개발 지시 §6 항목 5)에서 발견해 교정
 
+**CLI (Layer 3-2 그룹 B)** — `cm chat main/agent/send/list/log/search` 대화 6개 명령
+- `src/cli/output.ts`에 3종 추가 — `totalFooter`(페이지네이션 없는 목록 전용 — `GET /api/conversations`·
+  `/search`는 `pagination` 객체를 안 돌려줘 기존 `paginationFooter`를 못 쓴다) · `dim`(SCR-CH11 "archived는
+  dim") · `highlightMark`(SCR-CH13 FTS5 `snippet()`의 `<mark>`를 터미널 강조로 치환). 그룹 A가 만든
+  `renderTable`·`formatFields`·`shortId`·`truncateName`·`formatTimestamp`는 그대로 재사용
+- `src/cli/api-client.ts`에 `ApiClient.getText()` 추가 — `GET /api/conversations/:id/export`가 이
+  코드베이스에서 유일하게 `{data:...}` 봉투 없이 `text/markdown`을 그대로 응답한다(DES-002 §4). 기존
+  `send()`는 항상 `JSON.parse`를 시도해 실패하면 `undefined`로 삼키므로(`parseJsonSafely`) 마크다운 본문이
+  통째로 사라진다 — JSON 파싱을 건너뛰는 별도 경로를 추가했다
+- `cm chat main`·`cm chat agent <id>`(`src/cli/commands/chat.ts`, DES-006 SCR-CH01·CH02) — 이
+  그룹의 첫 REPL. `/exit` 입력과 Ctrl+C(SIGINT)·Ctrl+D(EOF) 셋 다 세션 종료로 수렴한다
+  (`createDefaultReadLine` — 하나의 `readline.Interface`를 세션 내내 재사용하고 SIGINT·close 둘 다
+  readLine을 `null`로 resolve). **비대화형 환경(TTY 아님)에서는 REPL을 아예 띄우지 않는다**(`auth.ts`의
+  `NOT_TTY` 판단과 같은 원칙) — `chat agent`는 읽기 전용 채널을 보여줄 때도 이 가드를 통과해야 한다(REPL
+  화면이라는 성격 자체가 비대화형에 맞지 않는다는 판단, 등급 낮음). Agent 채널이 `completed`/`cancelled`면
+  CH-AGENT가 `readonly`라는 판정은 별도 API 호출 없이 `agent.service.ts`(DES-007 v2 §8)의 확정된 전이
+  규칙을 그대로 쓴다 — Agent 상세 조회 자체가 삭제(archived)되지 않았음을 보장하므로 남는 경우는
+  active/readonly 둘뿐이다. 실시간 수신(WS)은 배선하지 않는다(Phase 1 범위 밖, Hub만 구현됨) — REPL은
+  최근 20건 표시 + 전송 + 전송 확인까지만 한다
+- `cm chat send <채널> "<본문>"`(SCR-CH03) — `<채널>`은 리터럴 `main` 또는 Agent ID(전체·앞 8자리).
+  Agent 쪽 해석은 `agent.ts`의 `runAgentDetail()`을 재사용한다 — `AgentDetail.conversationId`가 이미 그
+  Agent의 CH-AGENT id를 담고 있어(D-27) 대화 채널을 따로 목록 조회할 필요가 없다
+- `cm chat list [--type|--status]`(SCR-CH11) — 아카이브 채널은 제목 뒤 "(삭제됨)"(`entitySnapshot`
+  기반 title은 서버가 이미 채운다)과 행 전체 `dim()`으로 표시
+- `cm chat log <채널id> [--since] [--export [path]]`(SCR-CH12) — 커서 페이지네이션을 끝까지 순회해
+  전체 메시지를 시간순으로 모은다(`fetchAllMessagesChronological`, `limit+1` 초과분으로 `hasMore` 판정,
+  각 페이지가 이미 최신→과거 순이라 전체를 이어 붙인 뒤 한 번만 뒤집는다). `--since`는 서버에 필터 파라미터가
+  없어 클라이언트에서 거른다. `--export`는 `GET .../export`를 그대로 저장한다 — 기본 파일명은
+  `conversation-<8자>-<타임스탬프>.md`(CWD), 사용자 지정 상대 경로가 CWD를 벗어나면 거부한다(`resolveExportPath`,
+  Layer 2-9 `artifact.service.ts`의 `resolveSafeGitPath()`와 같은 원칙이되 **절대 경로는 허용** — 서버가 DB의
+  신뢰할 수 없는 경로를 읽는 상황이 아니라 대표가 터미널에 직접 입력한 로컬 저장 위치라 위협 모델이 다르다)
+- `cm chat search "<검색어>"`(SCR-CH13) — 2자 미만은 서버를 부르지 않고 즉시 거부. 결과 0건 포함 항상
+  "한국어 조사로 인한 미검출 가능성" 경고블록을 붙인다(DES-003 §3-3 미해결 사항)
+- MSG-01~06 렌더링(DES-013 §3-1·3-2) — REPL 초기 로드는 MSG-03을 4단 접기, `cm chat log`는 4단 전개.
+  MSG-04(의사결정 요청)는 "그냥 흘러가면 안 되는" 메시지라 항상 `⚠` 카드 + 승인ID(8자) + `cm decide` 안내로
+  강조한다(EVT-CH01-4). `Message` 응답 스키마엔 승인의 선택지·안건 상세가 없어(그 필드는 `approvals` 리소스
+  소관, `cm review`/`cm decide`는 그룹 C 범위) 카드는 `body`·`approvalId`로만 구성했다 — §3-1 "응답 필드에
+  없는 것을 화면에 만들지 않는다" 원칙을 따른 결과이자 알려진 축소 범위(미해결 사항 참조)
+
 ### Changed
 
 - **`GATE_REQUIRED_SKILLS`를 단일 원본으로 승격** — `phase.service.ts`의 모듈 지역 상수였던 것을
@@ -183,6 +222,8 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 - **R-04 트랜잭션의 원자성이 주석에만 의존하던 문제** — `ApprovalService.closeByRequester()`·`AgentService.delete()`를 `db.transaction()` 안에서 `void`로 fire-and-forget 호출하던 구조는, 둘 다 `async`라 나중에 내부에 `await`가 하나 추가되면 그 뒤 쓰기가 커밋 이후로 밀려 원자성이 조용히 깨지고, 두 번째 호출이 거부되어도 `void`가 삼켜 unhandled rejection이 되며 트랜잭션은 그대로 커밋되는 위험이 있었다. `closeByRequesterSync()`·`deleteSync()` 동기 코어를 추출해 `DELETE /api/agents/:id`가 이를 트랜잭션 콜백 안에서 직접 호출·반환하도록 교정 — `async`가 아니므로 내부에 `await`를 쓰면 컴파일이 실패해, "트랜잭션 콜백 안에서 안전하다"는 불변조건을 타입 체커가 강제한다. 사전 조회(`countPendingByRequester`)·fire-and-forget이 모두 불필요해졌다. 두 실패 순서(승인 마감 후 Agent 삭제 실패 / 승인 마감 자체 실패) 모두 전건 롤백되는지 회귀 테스트로 검증
 - **`AgentService.create()`에 남아 있던 같은 종류의 fire-and-forget 트랜잭션 호출** — `db.transaction()` 콜백 안에서 `async`인 `ConversationService.createForAgent()`를 `void`로 호출하던 것을, R-04와 같은 방식으로 `createForAgentSync()` 동기 코어를 추출해 직접 호출·`void` 제거로 교정. `db.transaction()` 콜백을 쓰는 나머지 지점(`PhaseService`·`ApprovalService`·`migrate.ts`)은 전수 확인 결과 전부 동기 Repository 호출만 있어 해당 없음
 - **`cm project status --set`·`cm agent status --set`이 캐스케이드 대상이 아닐 때 "이전상태"를 빈 문자열로 보여주던 문제** — `--set cancelled`일 때만 전이 전 스냅샷을 조회하도록 짜여 있어, 그 외 모든 전이(예: `ready → running`)가 `전이:  → running`처럼 출력됐다. 전이 전 상태 조회를 캐스케이드 여부와 무관하게 항상 수행하도록 교정 — 실제 백엔드로 14개 명령을 손으로 돌리다 발견했다(개발 지시 §6 항목 5)
+- **`cm chat list`·`cm chat search`의 표가 열이 정렬되지 않던 문제** — 헤더 행만 `padEnd`로 폭을 맞추고 본문 행은 셀을 그대로 `join`해, ID·상태·미읽음 컬럼이 값 길이만큼 들쭉날쭉하게 출력됐다. `chat list`는 `output.ts`의 `renderTable()`을 그대로 쓰도록 교정하고, 아카이브 행만 렌더링 후 줄 단위로 `dim()`을 씌운다(셀 안에 먼저 ANSI 이스케이프를 넣으면 그 바이트 수까지 `padEnd`가 폭 계산에 넣어 표가 다시 깨진다). `chat search`는 `snippet`이 `<mark>`를 ANSI로 바꾼 가변 길이 강조 텍스트라 애초에 고정폭 표에 맞지 않아, 행 블록 형태로 바꿨다 — 실제 백엔드를 띄워 6개 명령을 손으로 돌리는 과정(개발 지시 §6 항목 5)에서 발견했다
+- `resolveExportPath()`가 상위 탈출 검사 시 `cwd` 원문을 그대로 비교해, 호출부가 넘긴 `process.cwd()`가 아닌 형식(예: 드라이브 문자 없는 경로)이면 정상 경로도 오탐으로 거부될 수 있었다 — 비교 기준(`cwd`)도 대상(`target`)과 같은 방식으로 먼저 정규화하도록 교정 (테스트 작성 중 발견)
 
 ### Security
 
@@ -197,10 +238,26 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   경로 주입 시도·존재하지 않는 파일·연결된 Git 경로 없음을 모두 동일한 `404 NOT_FOUND`로 응답해 클라이언트에
   구분을 노출하지 않고, 에러 메시지에 파일 시스템 경로·OS 에러 원문(`ENOENT` 등)을 담지 않는다. 본문 읽기 크기
   상한(2MB, 등급 낮음 자율 판단)을 두어 잘못 연결된 대용량 파일을 통째로 메모리에 올리지 않는다
+- `cm chat log --export`가 사용자 지정 저장 경로를 CWD 기준으로 정규화하고, 상대 경로가 `..`로
+  CWD를 벗어나면 거부한다(`resolveExportPath`). 절대 경로는 허용한다 — 로컬 CLI 사용자가 자기
+  파일시스템에 직접 지정하는 저장 위치라 `artifacts.service.ts`(서버가 DB의 신뢰할 수 없는 경로를
+  읽는 상황)와 위협 모델이 다르다는 판단(등급 낮음, 자율 판단·근거는 소스 주석에 기록)
 
 ### 미반영 (Phase 1 잔여)
 
-- WebSocket 엔드포인트 (`WS /ws`, `WS /ws/conversations/:id`) — Hub만 구현됨. `approval:created`·`approval:updated` 브로드캐스트 호출은 있으나 실제 소켓 라우트 배선은 다음 계층
-- CLI 명령 그룹 — `cm chat`·`cm inbox`·`cm decide`·`cm approvals`·`cm review`·`cm progress`·`cm stage`·`cm artifacts` (`cm auth`는 Layer 3-1, `cm project`·`cm agent`·`cm task`·`cm status-changes`는 Layer 3-2 그룹 A에서 구현됨. 그룹 B·C·D 잔여)
+- WebSocket 엔드포인트 (`WS /ws`, `WS /ws/conversations/:id`) — Hub만 구현됨. `approval:created`·`approval:updated` 브로드캐스트 호출은 있으나 실제 소켓 라우트 배선은 다음 계층. `cm chat main/agent`도 이 때문에 REPL 안에서 실시간 수신을 하지 않는다(전송 + 확인까지만, 개발 지시 §2(1))
+- CLI 명령 그룹 — `cm inbox`·`cm decide`·`cm approvals`·`cm review`·`cm progress`·`cm stage`·`cm artifacts`
+  (`cm auth`는 Layer 3-1, `cm project`·`cm agent`·`cm task`·`cm status-changes`는 그룹 A, `cm chat`은
+  그룹 B에서 구현됨. 그룹 C·D 잔여)
+- **`ConversationService.markRead()`를 호출하는 HTTP 경로가 없다** — `conversations.routes.ts`의 REST
+  5종(목록·메시지 조회·전송·검색·내보내기) 중 읽음 포인터를 갱신하는 라우트가 없다(DES-004 §전체 함수
+  시그니처 요약엔 `markRead(id): Promise<Conversation>`가 있지만 어느 라우트에서도 부르지 않는다). `cm chat
+  main`·`cm chat agent`가 채널을 열어도 `GET /api/conversations`의 `unreadCount`가 줄지 않는다 — CLI가
+  라우트를 새로 만들 권한이 없어(`src/backend/**`는 완결 범위) 호출을 생략했다. 백엔드에 `PATCH
+  /api/conversations/:id/read` 신설 또는 `GET .../messages`가 부수효과로 `markRead`를 호출하도록 보완이
+  필요하다(대표 결정 필요 — 등급 보통)
+- `cm chat` MSG-04 카드가 `⚠` 강조·승인ID·`cm decide` 안내까지만 보여준다 — SCR-CH01 표시 데이터가 요구하는
+  "선택지"는 `Message` 응답 스키마에 없고 `approvals` 리소스에만 있다. `cm review`/`cm decide`(그룹 C)가
+  구현되면 그쪽에서 전체 상세를 본다
 - FTS5 한국어 토크나이저 미확정 — `unicode61`은 조사가 붙은 어절을 원형으로 못 찾는다. `trigram`과 실데이터 비교 후 확정
 - Graceful Shutdown이 단위 테스트 커버리지에서 제외됨 — 통합 테스트에서 다뤄야 한다
