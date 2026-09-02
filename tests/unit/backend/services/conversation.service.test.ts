@@ -78,6 +78,7 @@ describe('list — FR-026', () => {
     await service.archiveByEntity(agentId, {
       agentName: '삭제예정에이전트',
       projectName: '프로젝트명',
+      projectId: crypto.randomUUID(),
       agentType: 'dev',
     });
     // D-27 — Agent 행 자체가 사라져도 이름이 나와야 한다
@@ -296,6 +297,7 @@ describe('archiveByEntity — Agent 삭제 시 (D-27)', () => {
     const returnedId = await service.archiveByEntity(agentId, {
       agentName: '삭제될이름',
       projectName: '프로젝트',
+      projectId: crypto.randomUUID(),
       agentType: 'dev',
     });
 
@@ -310,6 +312,7 @@ describe('archiveByEntity — Agent 삭제 시 (D-27)', () => {
       service.archiveByEntity(crypto.randomUUID(), {
         agentName: 'x',
         projectName: 'y',
+        projectId: 'p',
         agentType: 'z',
       }),
     ).rejects.toMatchObject({ statusCode: 404, code: 'CONVERSATION_NOT_FOUND' });

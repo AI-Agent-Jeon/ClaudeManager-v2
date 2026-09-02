@@ -52,6 +52,8 @@ const MSG_TYPE_SENDER_ROLE: Record<string, string> = {
 interface StoredEntitySnapshot {
   agent_name: string;
   project_name: string;
+  /** 필터링용. 마이그레이션 이전에 만들어진 스냅샷에는 없을 수 있다 */
+  project_id?: string;
   agent_type: string;
 }
 
@@ -59,6 +61,7 @@ function snapshotToJson(snapshot: EntitySnapshot): string {
   const stored: StoredEntitySnapshot = {
     agent_name: snapshot.agentName,
     project_name: snapshot.projectName,
+    project_id: snapshot.projectId,
     agent_type: snapshot.agentType,
   };
   return JSON.stringify(stored);
@@ -69,6 +72,9 @@ function snapshotFromJson(json: string): EntitySnapshot {
   return {
     agentName: stored.agent_name,
     projectName: stored.project_name,
+    // 옛 스냅샷에는 project_id가 없다. 빈 문자열이면 project 필터에 걸리지
+    // 않을 뿐, 채널 조회·표시는 정상 동작한다.
+    projectId: stored.project_id ?? '',
     agentType: stored.agent_type,
   };
 }

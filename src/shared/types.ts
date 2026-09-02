@@ -231,10 +231,17 @@ export interface ListStatusChangesOpts {
 // 대화 (FR-026 · FR-027)
 // ─────────────────────────────────────────────
 
-/** 삭제된 Agent의 정보 보존용 (D-27) */
+/**
+ * 삭제된 Agent의 정보 보존용 (D-27)
+ *
+ * `projectId`는 화면 표시용이 아니라 **필터링용**이다. Agent가 삭제되면
+ * `agents` 조인이 비어 `GET /api/conversations?project=`가 그 채널을
+ * 떨어뜨린다. 이름만으로는 매칭할 수 없어 id를 함께 남긴다.
+ */
 export interface EntitySnapshot {
   agentName: string;
   projectName: string;
+  projectId: string;
   agentType: string;
 }
 
