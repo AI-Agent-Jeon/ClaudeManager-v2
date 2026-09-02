@@ -24,7 +24,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "db:generate": "drizzle-kit generate",
+    "db:generate": "echo \"마이그레이션은 손으로 쓴다 — src/backend/migrations/*.sql (DES-003 §9). drizzle-kit generate는 CHECK 제약·부분 인덱스·FTS5를 잃는다\" && exit 1",
     "db:migrate": "tsx src/backend/db/migrate.ts"
   },
   "devDependencies": {
