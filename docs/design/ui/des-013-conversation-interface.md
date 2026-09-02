@@ -56,6 +56,7 @@ CLAUDE.md의 그래프 규칙이 채널 구조를 그대로 결정한다.
 | 시점 | 동작 |
 |------|------|
 | 시스템 최초 기동 | CH-MAIN 1개 자동 생성. 삭제 불가 |
+| CH-MAIN **주소 지정** | `main`을 경로 별칭으로 쓰지 않는다. **`GET /api/conversations?type=main`으로 id를 얻은 뒤 UUID로 접근**한다 (v2.1 정정) |
 | Agent 생성 | 해당 Agent의 CH-AGENT 자동 생성 |
 | Agent 종료(completed/cancelled) | CH-AGENT는 **읽기 전용**으로 전환. 삭제하지 않음 (감사 추적) |
 | Agent 삭제 | **v2 변경 — 대화는 보존한다.** CH-AGENT를 `archived`로 전환하고 `entity_snapshot`(Agent명·프로젝트명·유형)을 남긴다. 메시지는 CASCADE 삭제하지 않는다 |
@@ -220,7 +221,7 @@ Pane 1에서 Agent 선택 시 Pane 3의 **기본 탭이 [대화]**다 (DES-012 �
 
 | 이벤트 ID | 트리거 | 사전 조건 | 결과 유형 | 대상 | 표시 데이터 | API |
 |-----------|--------|----------|----------|------|-----------|-----|
-| EVT-CH-1 | Pane 1 [Main] 클릭 | 인증됨 | 화면이동(2-Pane) | CH-MAIN | 메시지 전체(무한스크롤) + 진행 중 위임 목록 | GET /api/conversations/main/messages |
+| EVT-CH-1 | Pane 1 [Main] 클릭 | 인증됨 | 화면이동(2-Pane) | CH-MAIN | 메시지 전체(무한스크롤) + 진행 중 위임 목록 | GET /api/conversations?type=main → GET /api/conversations/:id/messages |
 | EVT-CH-2 | Pane 1 Agent 클릭 | Agent 존재 | 인라인갱신 | Pane 3 [대화] 탭 | 해당 CH-AGENT 메시지 | GET /api/conversations/:id/messages |
 | EVT-CH-3 | 입력창 `⏎` | 본문 1자 이상 | 인라인갱신 | 대화 하단 | MSG-01 추가 + 상대 응답 스트리밍 | POST /api/conversations/:id/messages |
 | EVT-CH-4 | `Shift+⏎` | — | 인라인갱신 | 입력창 | 줄바꿈 (전송 아님) | — |

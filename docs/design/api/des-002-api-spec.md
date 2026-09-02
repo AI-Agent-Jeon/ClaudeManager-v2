@@ -186,6 +186,9 @@ Authorization: Bearer <JWT>
 
 > `title`은 저장 값이 아니다. `status='archived'`면 `entitySnapshot.agentName`에서, 아니면 `agents` 조인으로 만든다. **Agent가 삭제되어도 이름이 나온다** (D-27).
 
+> **CH-MAIN 주소 지정 (v2.1)**: `:id`는 **UUID 전용**이다(§6-3 `format: 'uuid'`). `/api/conversations/main/...` 같은 경로 별칭은 스키마 검증에서 걸린다.
+> `cm chat main`과 웹 [Main] 진입은 **`GET /api/conversations?type=main`으로 id를 먼저 얻은 뒤** 그 UUID로 메시지 엔드포인트를 호출한다. CH-MAIN은 부분 유니크 인덱스로 전역 1개가 보장되므로 결과는 항상 1건이다 (DES-003 v2 §3-1).
+
 ### `GET /api/conversations/:id/messages`
 
 | 이름 | 타입 | 기본 | 설명 |

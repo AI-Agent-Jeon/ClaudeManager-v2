@@ -1,7 +1,7 @@
 # DES-001 아키텍처 설계서
 
 > Phase 1: 기반 구축
-> 버전: **v3.0 (2026-09-01)** — 승인 반영. Phase 1 컴포넌트 17 → 30종 + ADR-012
+> 버전: **v3.1 (2026-09-02)** — 교차 검증 정정. Phase 1 컴포넌트 18 → 35종 + ADR-012
 > **원본**: [Notion DES-001](https://app.notion.com/p/3c5d066504ec81b78014c7ccd8cb0723) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -251,6 +251,7 @@ graph TD
 | NFR-002 API 인증 미들웨어 | Auth Plugin (preHandler) | ✅ |
 | FR-003 프로젝트 생성 | Project Routes/Service/Repository | ✅ |
 | FR-004 프로젝트 목록 조회 | Project Routes/Service/Repository | ✅ |
+| FR-005 프로젝트 상세 조회 | Project Routes/Service/Repository, Agent Repository | ✅ |
 | FR-006 프로젝트 상태 변경 | Project Routes/Service/Repository, State Machine | ✅ |
 | FR-007 Agent 상태 CRUD | Agent Routes/Service/Repository, State Machine | ✅ |
 | FR-008 Task 상태 CRUD | Task Routes/Service/Repository, State Machine | ✅ |
@@ -412,7 +413,8 @@ ANL-003의 높음/보통 리스크에 대한 설계적 대응:
 | RISK-007 better-sqlite3 빌드 | 보통 | Database Plugin이 드라이버를 추상화 → 교체 시 Plugin만 수정 |
 | RISK-010 인증 보안 | 보통 | Auth Plugin이 JWT 처리를 캡슐화, 시크릿은 환경 변수, localhost only 바인딩 |
 
-> **⚠ RISK-010 재검토 필요 (2026-09-01)**: D-19 터널링 승인으로 **localhost only 바인딩 전제가 깨진다.** 터널을 통한 외부 접근 경로가 생기므로 보안 경계를 재정의해야 한다. DES-015 §2-2 참조.
+> **✅ RISK-010 전제 유효 (2026-09-02 정정)**: D-19 터널링이 **Phase 2로 연기**되어 Phase 1에는 외부 접근 경로가 생기지 않는다. "localhost only 바인딩" 전제는 그대로 유효하다 (§접속 경계).
+> 보안 경계 재정의는 **Phase 2 착수 시점**의 과제다. DES-015 §2-2 참조.
 
 ---
 
@@ -457,12 +459,12 @@ Phase 1의 FR-002는 토큰 기반 인증을 요구한다. 1인 사용자 로컬
 | 실시간 Agent Board (FR-014) | 에이전트 로그/진행률/명령 실시간 스트리밍 | WebSocket 채널 확장, Backend에 LogStreamer 컴포넌트 추가 | 2 |
 | 비용/토큰 추적 (FR-016) | Agent별 토큰 사용량/비용 기록·조회 | Backend에 UsageTracker 서비스 추가, token_usages 테이블, 모델별 단가 설정 | 2 |
 | 칸반 보드 (FR-017) | Task를 칸반 컬럼으로 시각화 | Frontend 전용 (기존 Task API 활용), WIP 제한은 프로젝트 설정에 추가 | 2 |
-| 승인 게이트 (FR-018) | 승인 요청/처리/타임아웃/감사 로그 | Backend에 ApprovalService 추가, approvals 테이블, WebSocket 알림 채널 | 2 |
+| ~~승인 게이트 (FR-018)~~ | **Phase 1로 편입 완료 (D-16)** — FR-030으로 구체화. ApprovalService·approvals 테이블은 위 Component Diagram 참조 | ~~2~~ → **1** |
 | 워크트리 기반 격리 (FR-013) | Sub-Agent별 독립 git worktree | Backend에 WorktreeManager 컴포넌트 추가, Agent 생성 시 worktree 할당/해제 API 필요 | 3 |
 | 워크플로우 템플릿 (FR-019) | Agent/Task 구성 저장·재사용 | Backend에 TemplateService 추가, workflow_templates 테이블 | 3 |
 | 공유 메모리 (FR-020) | Agent 간 컨텍스트 공유 저장소 | Backend에 MemoryService 추가, shared_memories 테이블 (단기/장기 구분) | 3 |
 | 세션 관리 (FR-021) | Agent 세션 제어, Hook 이벤트 기록 | Backend에 SessionService 추가, agent_sessions/session_events 테이블 | 3 |
-| 모바일 모니터링 PWA (FR-015) | 모바일 웹에서 상태 확인/승인 처리 | Frontend를 PWA로 구성 (Service Worker, manifest.json), Push API 연동 | 4 |
+| 모바일 모니터링 PWA (FR-015) | 모바일 웹에서 상태 확인/승인 처리 | Frontend를 PWA로 구성 (Service Worker, manifest.json), Push API 연동 | ~~4~~ → **2** (D-23) |
 | 오케스트레이션 DAG (FR-022) | Agent 관계 그래프 시각화 | Frontend 전용 (기존 Agent API의 parent 관계 활용), D3/React Flow 라이브러리 | 4 |
 | 알림/웹훅 (FR-023) | 이벤트별 외부 채널 알림 | Backend에 NotificationService 추가, notification_rules/notification_logs 테이블 | 4 |
 | 롤백/체크포인트 (FR-024) | git 스냅샷 저장·복원 | Backend에 CheckpointService 추가, git stash/tag 기반 스냅샷 관리 | 5 |
@@ -470,7 +472,7 @@ Phase 1의 FR-002는 토큰 기반 인증을 요구한다. 1인 사용자 로컬
 
 **현재 아키텍처와의 호환성**: Phase 1의 3-Layer + Plugin 구조는 위 확장에 대응 가능.
 
-- **Phase 2 추가 컴포넌트**: UsageTracker, ApprovalService, LogStreamer → Fastify Plugin으로 추가
+- **Phase 2 추가 컴포넌트**: UsageTracker, LogStreamer, PushService → Fastify Plugin으로 추가 (ApprovalService는 D-16으로 **Phase 1에 편입 완료**)
 - **Phase 3 추가 컴포넌트**: WorktreeManager, TemplateService, MemoryService, SessionService → 기존 서비스 계층에 추가
 - **Phase 4~5 추가 컴포넌트**: NotificationService, CheckpointService → 기존 구조 변경 없이 확장
 - **Frontend 전용 기능**: 칸반, DAG 시각화, 성과 분석 → 기존 REST API를 그대로 활용, 프론트엔드 컴포넌트만 추가
@@ -485,7 +487,7 @@ Phase 1의 FR-002는 토큰 기반 인증을 요구한다. 1인 사용자 로컬
 | **보안 경계** | RISK-010 "localhost only" 전제 재정의 | D-19 | ✅ **전제 유효 확인** — Phase 1은 외부 노출이 없다 |
 | **외부 연동** | Web Push(VAPID) → APNs/FCM 경로 명시 | D-21 | ⏸️ **Phase 2** — 원격 접속이 Phase 2로 밀렸다 |
 | **Phase 배치** | FR-018 승인 게이트 Ph.2 → **Ph.1**, FR-015 PWA Ph.4 → **Ph.2** | D-16 · D-23 | ✅ **v3 반영** — 승인 게이트가 Phase 1 컴포넌트로 편입 |
-| **신규 컴포넌트** | ConversationService · ApprovalService · PhaseService · PushService 앞당김 | D-09 · D-16 | ✅ **v3 반영** — Phase 1분 5종 + Job 1종 + WS Hub 추가. PushService만 Phase 2 |
+| **신규 컴포넌트** | ConversationService · ApprovalService · PhaseService · PushService 앞당김 | D-09 · D-16 | ✅ **v3 반영** — Phase 1분 **17종 추가**(Routes 4 · Service 5 · Repository 6 · WS Plugin · WS Hub · Job). PushService만 Phase 2 |
 | **타임아웃 잡 배치** | 실행 방식 미정 | D-10 | ✅ **v3 확정** — ADR-012, Fastify 프로세스 내부 타이머 |
 
 ---
@@ -507,4 +509,5 @@ Phase 1의 FR-002는 토큰 기반 인증을 요구한다. 1인 사용자 로컬
 | v1.1 | 2026-08-24 | Phase 2+ 확장 고려사항 추가 (FR-013~015) |
 | v2.0 | 2026-08-24 | Phase 2~5 전체 확장 반영 (FR-016~025 아키텍처 영향 분석) |
 | — | 2026-09-01 | Git 동기화 + 승인 반영 필요 항목 주석 추가 (내용 변경 없음) |
-| **v3.0** | 2026-09-01 | **승인 반영 개정.** Component Diagram에 **Service 5종 · Repository 5종 · WebSocket Hub · ApprovalTimeoutJob · WebSocket Plugin 추가**(Phase 1 컴포넌트 17 → 30종).<br>**ADR-012 신설 — 타임아웃 잡을 Fastify 프로세스 내부 타이머로 확정**(SQLite 단일 쓰기자 전제와 충돌하는 별도 워커안 기각). DES-002 v2·DES-004 v2가 두 번 걸어둔 미해결 해소.<br>레이어 규칙 2건 추가(Jobs는 Service만 호출 · WS Hub는 출력 전용), 허용된 Service 간 단방향 의존 3건 명시. WebSocket 인증을 Cross-Cutting에 편입. **접속 경계를 Phase 1 루프백 전용으로 확정**(D-19 연기 반영). Graceful Shutdown에 잡 정지·소켓 정리 2단계 추가. 미해결 2건 등록 |
+| **v3.0** | 2026-09-01 | **승인 반영 개정.** Component Diagram에 **Routes 4종 · Service 5종 · Repository 6종 · WebSocket Hub · ApprovalTimeoutJob · WebSocket Plugin 추가**(Phase 1 컴포넌트 18 → 35종).<br>**ADR-012 신설 — 타임아웃 잡을 Fastify 프로세스 내부 타이머로 확정**(SQLite 단일 쓰기자 전제와 충돌하는 별도 워커안 기각). DES-002 v2·DES-004 v2가 두 번 걸어둔 미해결 해소.<br>레이어 규칙 2건 추가(Jobs는 Service만 호출 · WS Hub는 출력 전용), 허용된 Service 간 단방향 의존 3건 명시. WebSocket 인증을 Cross-Cutting에 편입. **접속 경계를 Phase 1 루프백 전용으로 확정**(D-19 연기 반영). Graceful Shutdown에 잡 정지·소켓 정리 2단계 추가. 미해결 2건 등록 |
+| **v3.1** | 2026-09-02 | **교차 검증 정정 (내용 변경 없음, 표기 정합).** 컴포넌트 수 오기 정정 — Component 상세 표 실제 행 기준 **18 → 35종**(v3.0 본문의 "17 → 30종"은 집계 오류).<br>**RISK-010 경고 정정** — D-19 터널링이 Phase 2로 연기되어 "localhost only 전제가 깨진다"는 §접속 경계의 확정과 모순이었다. **전제 유효**로 정정.<br>Phase 2+ 확장표 **FR-018 Phase 2 → 1**(D-16 편입 완료) · **FR-015 Phase 4 → 2**(D-23). Must Story 매핑에 **FR-005 누락 보완** |

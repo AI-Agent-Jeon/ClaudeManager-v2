@@ -1,7 +1,7 @@
 # DES-009 코드 정의서
 
 > Phase 1: 기반 구축
-> 버전: **v3.0 (2026-09-01)** — 대화·승인·진행 Enum 12종 + 에러 코드 9종 추가
+> 버전: **v3.1 (2026-09-02)** — 교차 검증 정정. Enum 12종을 TypeScript 코드 블록에 전건 반영
 > **원본**: [Notion DES-009](https://app.notion.com/p/3c5d066504ec814488cbfec3661f0667) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -281,7 +281,7 @@ interface ErrorResponse {
 | SHUTDOWN_TIMEOUT_MS | 10000 | — | Graceful shutdown 타임아웃 |
 | DB_FILE_PATH | `"./data/claude-manager.db"` | CM_DB_PATH | SQLite 파일 경로 |
 
-> **⚠ D-19 승인 반영 필요**: `DEFAULT_HOST`의 "localhost only" 전제가 터널링 도입으로 바뀐다. 터널 바인딩 방식에 따라 값 또는 주석 갱신 필요.
+> **✅ D-19 정리 완료 (2026-09-02)**: 터널링이 **Phase 2로 연기**되어 Phase 1의 `DEFAULT_HOST = "127.0.0.1"` (localhost only)는 **그대로 유효**하다 (DES-001 v3 §접속 경계). 터널 바인딩 방식은 Phase 2 착수 시 재검토한다.
 
 ### 인증
 
@@ -347,12 +347,134 @@ export const TaskStatus = {
 } as const;
 export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
 
+// v3.1 — 6종. DES-003 v2 §status_changes CHECK 제약과 동일해야 한다
 export const EntityType = {
   PROJECT: "project",
   AGENT: "agent",
   TASK: "task",
+  CONVERSATION: "conversation",
+  APPROVAL: "approval",
+  STAGE: "stage",
 } as const;
 export type EntityType = (typeof EntityType)[keyof typeof EntityType];
+
+// --- 대화 Enum (v3.1 — 본문 §대화·승인·진행 코드의 코드화) ---
+
+export const MessageType = {
+  CEO_UTTERANCE:    "MSG-01",
+  MAIN_RESPONSE:    "MSG-02",
+  AGENT_REPORT:     "MSG-03",
+  DECISION_REQUEST: "MSG-04",
+  SYSTEM_EVENT:     "MSG-05",
+  ARTIFACT_LINK:    "MSG-06",
+} as const;
+export type MessageType = (typeof MessageType)[keyof typeof MessageType];
+
+export const ChannelType = {
+  MAIN:  "main",
+  AGENT: "agent",
+} as const;
+export type ChannelType = (typeof ChannelType)[keyof typeof ChannelType];
+
+export const ConversationStatus = {
+  ACTIVE:   "active",
+  READONLY: "readonly",
+  ARCHIVED: "archived",
+} as const;
+export type ConversationStatus = (typeof ConversationStatus)[keyof typeof ConversationStatus];
+
+export const SenderRole = {
+  CEO:    "ceo",
+  MAIN:   "main",
+  AGENT:  "agent",
+  SYSTEM: "system",
+} as const;
+export type SenderRole = (typeof SenderRole)[keyof typeof SenderRole];
+
+// --- 승인 Enum ---
+
+export const ApprovalType = {
+  GATE:   "APV-GATE",
+  ARCH:   "APV-ARCH",
+  DEPLOY: "APV-DEPLOY",
+  EXT:    "APV-EXT",
+  CHOICE: "APV-CHOICE",
+  RETRY:  "APV-RETRY",
+} as const;
+export type ApprovalType = (typeof ApprovalType)[keyof typeof ApprovalType];
+
+// 5종. 'expired'는 없다 — 만료는 auto_advanced로 귀결된다 (DES-007 v2 §6)
+export const ApprovalStatus = {
+  PENDING:       "pending",
+  APPROVED:      "approved",
+  REJECTED:      "rejected",
+  CONDITIONAL:   "conditional",
+  AUTO_ADVANCED: "auto_advanced",
+} as const;
+export type ApprovalStatus = (typeof ApprovalStatus)[keyof typeof ApprovalStatus];
+
+// 판정용 3종. DB(approvals.level)에 적재되는 것은 high·medium 2종뿐이다
+export const DecisionLevel = {
+  HIGH:   "high",
+  MEDIUM: "medium",
+  LOW:    "low",
+} as const;
+export type DecisionLevel = (typeof DecisionLevel)[keyof typeof DecisionLevel];
+
+// approvals.level 컬럼에 실제로 저장 가능한 값 (DES-003 v2 §4-1 CHECK)
+export type StoredDecisionLevel = Exclude<DecisionLevel, "low">;
+
+export const WaitingReason = {
+  CEO_APPROVAL:   "ceo_approval",
+  CEO_DECISION:   "ceo_decision",
+  EXTERNAL_INPUT: "external_input",
+} as const;
+export type WaitingReason = (typeof WaitingReason)[keyof typeof WaitingReason];
+
+// --- 진행 Enum ---
+
+export const SkillName = {
+  PLAN:    "plan",
+  ANALYZE: "analyze",
+  DESIGN:  "design",
+  DEVELOP: "develop",
+  TEST:    "test",
+  DEPLOY:  "deploy",
+  OPERATE: "operate",
+} as const;
+export type SkillName = (typeof SkillName)[keyof typeof SkillName];
+
+export const StageStatus = {
+  PENDING:     "pending",
+  IN_PROGRESS: "in_progress",
+  COMPLETED:   "completed",
+} as const;
+export type StageStatus = (typeof StageStatus)[keyof typeof StageStatus];
+
+export const ArtifactStatus = {
+  DRAFT:    "draft",
+  REVIEW:   "review",
+  APPROVED: "approved",
+} as const;
+export type ArtifactStatus = (typeof ArtifactStatus)[keyof typeof ArtifactStatus];
+
+// 저장하지 않고 notionUrl·gitPath 유무에서 파생한다 (DES-003 v2 §4-4)
+export const SyncStatus = {
+  SYNCED:      "synced",
+  NOTION_ONLY: "notion_only",
+  GIT_ONLY:    "git_only",
+  MISSING:     "missing",
+} as const;
+export type SyncStatus = (typeof SyncStatus)[keyof typeof SyncStatus];
+
+// --- WebSocket close code ---
+
+export const WsCloseCode = {
+  GOING_AWAY:  1001,
+  UNAUTHORIZED: 4001,
+  NOT_FOUND:    4004,
+} as const;
+export type WsCloseCode = (typeof WsCloseCode)[keyof typeof WsCloseCode];
 
 // --- 에러 코드 ---
 
@@ -413,12 +535,12 @@ Phase 1에서는 에이전트 유형을 자유 텍스트로 입력받는다. 향
 | 실시간 Agent Board (FR-014) | `LogLevel` Enum (debug, info, warn, error), `AgentEvent` 타입 정의 | 2 |
 | 비용/토큰 추적 (FR-016) | `ModelType` Enum (opus, sonnet, haiku), `TokenUsage` 인터페이스, 에러 코드 `BUDGET_EXCEEDED` | 2 |
 | 칸반 보드 (FR-017) | `KanbanColumn` 타입 (TaskStatus 매핑), `WipLimit` 설정 타입 | 2 |
-| 승인 게이트 (FR-018) | `ApprovalStatus` Enum (pending, approved, rejected, timeout), `ApprovalAction` Enum, `DecisionLevel` Enum (high, medium, low), 에러 코드 `APPROVAL_*` | 2 |
+| ~~승인 게이트 (FR-018)~~ | **Phase 1로 편입 완료 (D-16).** 확정값은 위 §ApprovalStatus(5종, `timeout` 아님) · §DecisionLevel(저장 2종) · §대화·승인·진행 에러 코드 참조. **이 행의 예상값은 폐기한다** | ~~2~~ → **1** |
 | 워크트리 기반 격리 (FR-013) | `WorktreeStatus` Enum (creating, active, merging, cleaned), 에러 코드 `WORKTREE_*` | 3 |
 | 워크플로우 템플릿 (FR-019) | `TemplateStatus` Enum (draft, published, archived), 에러 코드 `TEMPLATE_NOT_FOUND` | 3 |
 | 공유 메모리 (FR-020) | `MemoryScope` Enum (session, project, global), `MemoryEntry` 인터페이스 | 3 |
 | 세션 관리 (FR-021) | `SessionStatus` Enum, `SessionEventType` Enum (start, tool_use, stop, error) | 3 |
-| 모바일 모니터링 PWA (FR-015) | `PushEventType` Enum (approval_required, agent_completed, agent_failed) | 4 |
+| 모바일 모니터링 PWA (FR-015) | `PushEventType` Enum (approval_required, agent_completed, agent_failed) | ~~4~~ → **2** (D-23) |
 | 오케스트레이션 DAG (FR-022) | `NodeType` Enum (agent, sub_agent), `EdgeType` Enum (parent, handoff, feedback) | 4 |
 | 알림/웹훅 (FR-023) | `NotificationChannel` Enum, `NotificationStatus` Enum, 에러 코드 `NOTIFICATION_*` | 4 |
 | 롤백/체크포인트 (FR-024) | `CheckpointType` Enum (auto, manual), `RestoreStatus` Enum | 5 |
@@ -451,7 +573,7 @@ Phase 1에서는 에이전트 유형을 자유 텍스트로 입력받는다. 향
 
 | 항목 | 내용 | 등급 | 처리 시점 |
 |------|------|:---:|----------|
-| **`src/shared/` 실제 파일 미작성** | 본 문서의 Enum·상수는 **정의**다. `src/shared/types.ts`·`constants.ts` 실제 파일은 develop에서 만든다 | 낮음 | develop |
+| **`src/shared/` 실제 파일 미작성** | 본 문서의 Enum·상수는 **정의**다. `src/shared/types.ts`·`constants.ts` 실제 파일은 develop에서 만든다. **§TypeScript 타입 정의 블록을 그대로 옮기면 된다** (v3.1에서 전건 반영 완료) | 낮음 | develop |
 | **Agent 유형 Enum 미확정** | Phase 1은 자유 텍스트다. 하네스가 6종으로 고정되어 있으므로 Enum화 여지가 있으나 Phase 1 범위 밖 | 낮음 | Phase 2 |
 
 ---
@@ -465,3 +587,4 @@ Phase 1에서는 에이전트 유형을 자유 텍스트로 입력받는다. 향
 | v2.0 | 2026-08-24 | Phase 2~5 전체 Enum/타입 정의 확장 (FR-016~025) |
 | — | 2026-09-01 | Git 동기화 + 승인 반영 필요 Enum·에러코드 정리 |
 | **v3.0** | 2026-09-01 | **승인 반영 개정.** 대화·승인·진행 **Enum 12종** + **에러 코드 9종** + WebSocket close code 3종 확정.<br>**초안 대비 3건 정정** — `ApprovalStatus`에서 `expired` 제외(전이 맵에 없음), `DecisionLevel.low`는 적재하지 않음을 명시, `WaitingReason` 2종 → **3종**(무기한 대기와 30분 타임아웃 구분).<br>`EntityType` 3종 확장, `AgentStatus.waiting`에 사유 필드 표기, `ERROR_CODES` 상수 9종 추가. 미해결 2건 등록 |
+| **v3.1** | 2026-09-02 | **교차 검증 정정 — 본문 표와 코드 블록의 불일치 해소.** v3.0은 본문 표에만 Enum 12종을 확정하고 `## TypeScript 타입 정의` 코드 블록은 v2 상태(4종)로 두었다. develop이 이 블록으로 `src/shared/types.ts`를 만들면 **12종이 통째로 누락**되므로 코드 블록에 전건 반영했다.<br>`EntityType` 코드 블록 3종 → **6종**(본문 표와 일치), `StoredDecisionLevel` 보조 타입·`WsCloseCode` 상수 신설.<br>**D-19 경고 정정**(터널링 Phase 2 연기 → `DEFAULT_HOST` 전제 유효), Phase 2+ 확장표 **FR-018 Phase 2 → 1**(예상 Enum값 폐기 — 확정값과 달랐다) · **FR-015 Phase 4 → 2** |

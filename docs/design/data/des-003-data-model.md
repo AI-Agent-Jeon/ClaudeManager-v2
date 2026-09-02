@@ -1,7 +1,7 @@
 # DES-003 데이터 모델
 
 > Phase 1: 기반 구축
-> 버전: **v2 (2026-09-01)** — 승인 반영 개정. 테이블 4 → 15개
+> 버전: **v2.1 (2026-09-02)** — 교차 검증 정정. `status_changes` 확장 (§3-5)
 > **원본**: [Notion DES-003](https://app.notion.com/p/3c5d066504ec8139b48ec253164692d4) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -74,9 +74,9 @@ erDiagram
 
     status_changes {
         integer id PK "AUTOINCREMENT"
-        text entity_type "project/agent/task"
+        text entity_type "6종 — project/agent/task/conversation/approval/stage"
         text entity_id
-        text from_status
+        text from_status "NULL 허용 — 최초 생성 시"
         text to_status
         text changed_by
         text changed_at
@@ -266,6 +266,26 @@ CHECK (status = 'waiting' OR waiting_reason IS NULL)
 | `ceo_approval` | 대표 승인 대기 — 등급 높음 또는 APV-GATE | 없음 (무기한) |
 | `ceo_decision` | 대표 응답 대기 — 등급 보통 | 30분 (D-10) |
 | `external_input` | 그 외 외부 입력 대기 | — |
+
+---
+
+## 3-5. 기존 테이블 변경 — `status_changes` (v2.1)
+
+DES-007 v2 §9가 **"모든 상태 전이는 `status_changes` 기록과 함께 WebSocket으로 발행한다"**고 규정하면서 상태 머신이 3개 → 6개가 되었다. `entity_type`이 3종에 머물면 **신규 3개 상태 머신의 전이를 기록할 자리가 없다.** DES-009 v3 §EntityType 확장(6종)과 값을 일치시킨다.
+
+| 컬럼 | v2 | **v2.1** |
+|------|-----|---------|
+| `entity_type` | CHECK IN (`project`,`agent`,`task`) | CHECK IN (`project`,`agent`,`task`,**`conversation`**,**`approval`**,**`stage`**) |
+| `from_status` | 표기 없음 | **NULL 허용 명시** — 최초 생성 시 이전 상태가 없다 |
+
+```sql
+CHECK (entity_type IN ('project','agent','task','conversation','approval','stage'))
+```
+
+> **`from_status`는 `''`가 아니라 `NULL`이다 (등급 낮음 — 자율 판단 후 기록).**
+> DES-004 v2가 시퀀스에서는 `null`, 타입 블록에서는 `""`로 갈렸다. `''`는 "이전 상태가 없음"과 "빈 문자열 상태"를 구분하지 못하는 매직 값이므로 `NULL`로 통일한다. TypeScript 타입은 `string | null`이다 (DES-004 v2.1 §12).
+
+**기록 주체**: `ConversationService` · `ApprovalService` · `StageService`도 `StatusChangeService`를 호출한다. DES-001 §레이어 규칙 6이 **"StatusChange Service는 횡단 관심사 — 모든 엔티티 Service에서 사용"**이라 규정하므로 신규 의존이 아니다. ANL-002 v2 확정 의존표의 `ConversationService → AuditLogger`가 같은 내용이다.
 
 ---
 
@@ -489,7 +509,10 @@ Phase 2 확장 후보(FR-013 `worktrees`, FR-014 `agent_logs`)는 v1.1 기재를
 003_phases           phases → stages
 004_approvals        approvals  (messages·stages 이후여야 FK 성립)
 005_artifacts        artifacts → wip_waivers
+006_status_ext       status_changes.entity_type CHECK 6종 확장           (v2.1 · §3-5)
 ```
+
+> **006은 SQLite 특성상 테이블 재작성이다.** SQLite는 `ALTER TABLE … DROP CONSTRAINT`를 지원하지 않으므로 CHECK를 바꾸려면 새 테이블 생성 → `INSERT INTO … SELECT` → 원본 DROP → RENAME 순서로 처리한다. `status_changes`는 Phase 1 실데이터가 없어 비용이 없다.
 
 > **004는 002·003 이후여야 한다.** `approvals.message_id`가 `messages`를, `approvals.stage_id`가 `stages`를 참조하기 때문이다.
 
@@ -522,3 +545,4 @@ Phase 2 확장 후보(FR-013 `worktrees`, FR-014 `agent_logs`)는 v1.1 기재를
 | v1.1 | 2026-08-24 | Phase 2+ 확장 고려사항 추가 |
 | — | 2026-09-01 | Git 동기화 + 승인 반영 필요 테이블 11개 정리 + `data-model.md` 참조 누락 지적 |
 | **v2** | 2026-09-01 | **승인 반영 전면 개정.** 테이블 4 → 15개(Phase 1 11개 + Phase 2 예정 4개) + FTS5 가상 테이블 1개.<br>대화 3종(`conversations`·`messages`·`messages_fts`), 승인·진행 5종(`approvals`·`phases`·`stages`·`artifacts`·`wip_waivers`) 컬럼·제약 상세 정의.<br>**비즈니스 규칙 5건을 CHECK 제약으로 강제**(APV-GATE 자동진행 차단 등), **순환 FK 제거**(`stages.gate_approval_id`), **`conversations.entity_id` FK 제거**(D-27 대화 보존), **동기화 상태 파생 규칙**(FR-031), 인덱스 11종 추가, **마이그레이션 전략 신설**(v1 참조 누락 해소). 미해결 5건 등록 |
+| **v2.1** | 2026-09-02 | **교차 검증 정정.** §3-5 신설 — `status_changes.entity_type` CHECK **3종 → 6종**(conversation·approval·stage). v2는 상태 머신을 3 → 6개로 늘리면서 그 전이를 기록할 `entity_type`을 넓히지 않아 **DES-007 v2 §9(모든 전이를 기록)와 DES-009 v3(EntityType 6종)를 만족할 수 없었다**.<br>`from_status` **NULL 허용 명시** — DES-004가 `null`과 `""`로 갈려 있던 것을 `NULL`로 통일(등급 낮음, 자율 판단). 마이그레이션 `006_status_ext` 추가(SQLite CHECK 변경 = 테이블 재작성) |

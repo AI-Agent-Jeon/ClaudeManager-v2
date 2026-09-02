@@ -181,12 +181,12 @@ data/
 | 실시간 Agent Board (FR-014) | `src/backend/services/log-streamer.service.ts`, `src/frontend/components/AgentBoard/` | 2 |
 | 비용/토큰 추적 (FR-016) | `src/backend/services/usage.service.ts`, `.../repositories/usage.repository.ts`, `.../routes/usage.routes.ts`, `src/frontend/components/CostDashboard/` | 2 |
 | 칸반 보드 (FR-017) | `src/frontend/components/KanbanBoard/` (Frontend 전용) | 2 |
-| 승인 게이트 (FR-018) | `src/backend/services/approval.service.ts`, `.../repositories/approval.repository.ts`, `.../routes/approvals.routes.ts`, `src/frontend/components/ApprovalQueue/` | 2 |
+| ~~승인 게이트 (FR-018)~~ | **Phase 1로 편입 완료 (D-16)** — `src/backend/services/approval.service.ts`, `.../repositories/approval.repository.ts`, `.../routes/approvals.routes.ts`는 Phase 1 구조에 포함. `src/frontend/components/ApprovalQueue/`만 Phase 2 | ~~2~~ → **1** |
 | 워크트리 기반 격리 (FR-013) | `src/backend/services/worktree.service.ts`, `.../routes/worktrees.routes.ts`, `.../repositories/worktree.repository.ts` | 3 |
 | 워크플로우 템플릿 (FR-019) | `src/backend/services/template.service.ts`, `.../repositories/template.repository.ts`, `.../routes/templates.routes.ts` | 3 |
 | 공유 메모리 (FR-020) | `src/backend/services/memory.service.ts`, `.../repositories/memory.repository.ts`, `.../routes/memories.routes.ts` | 3 |
 | 세션 관리 (FR-021) | `src/backend/services/session.service.ts`, `.../repositories/session.repository.ts`, `.../routes/sessions.routes.ts` | 3 |
-| 모바일 모니터링 PWA (FR-015) | `src/frontend/public/manifest.json`, `src/frontend/service-worker.ts`, `src/backend/services/push.service.ts` | 4 |
+| 모바일 모니터링 PWA (FR-015) | `src/frontend/public/manifest.json`, `src/frontend/service-worker.ts`, `src/backend/services/push.service.ts` | ~~4~~ → **2** (D-23) |
 | 오케스트레이션 DAG (FR-022) | `src/frontend/components/OrchestrationView/` (Frontend 전용) | 4 |
 | 알림/웹훅 (FR-023) | `src/backend/services/notification.service.ts`, `.../repositories/notification.repository.ts`, `.../routes/notifications.routes.ts` | 4 |
 | 롤백/체크포인트 (FR-024) | `src/backend/services/checkpoint.service.ts`, `.../repositories/checkpoint.repository.ts` | 5 |

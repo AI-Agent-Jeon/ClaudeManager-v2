@@ -2,7 +2,7 @@
 
 > Phase 1: 기반 구축
 > 문서코드: DES-004
-> 버전: **v2 (2026-09-01)** — 대화·승인·진행 타입 및 시퀀스 4종 추가
+> 버전: **v2.1 (2026-09-02)** — 교차 검증 정정. 미정의 타입 4종 보완 + 채널 생명주기 시퀀스 2건 보완
 > **원본**: [Notion DES-004](https://app.notion.com/p/3c5d066504ec81d08e30df63322e4e98) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -50,6 +50,14 @@ interface PaginationOpts {
   pageSize: number;  // 기본값 20, 최대 100
 }
 
+// Service가 Route에 돌려주는 계산된 페이지 정보 (v2.1 — 정의 누락 보완)
+interface Pagination {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;   // Math.ceil(total / pageSize)
+}
+
 // --- 에러 응답 ---
 interface ErrorResponse {
   statusCode: number;
@@ -58,6 +66,35 @@ interface ErrorResponse {
   code: string;
 }
 ```
+
+### 목록 옵션 · 상세 응답 — v2.1 정의 누락 보완
+
+`ProjectDetail`·`ListProjectsOpts`만 정의되어 있고 Agent·Task 대응물이 빠져 있었다. **DES-002 v2 §6-1이 "JSON Schema는 이 문서의 타입에서 기계적으로 도출한다"고 규정하므로, 없는 타입은 Fastify 스키마를 만들 수 없다.**
+
+```typescript
+interface ListAgentsOpts {
+  page?: number;            // 기본값 1
+  pageSize?: number;        // 기본값 20
+  projectId?: string;       // ← --project 선택 필터
+  status?: AgentStatus;     // ← 선택 필터
+}
+
+interface ListTasksOpts {
+  page?: number;
+  pageSize?: number;
+  agentId?: string;         // ← --agent 선택 필터
+  status?: TaskStatus;
+}
+
+// GET /api/agents/:id 응답. ProjectDetail이 agents를 안는 것과 같은 구조
+interface AgentDetail extends Agent {
+  tasks: Task[];
+  waitingReason: WaitingReason | null;   // status === 'waiting'일 때만 (D-11)
+  conversationId: string | null;         // 이 Agent의 CH-AGENT (D-27)
+}
+```
+
+> `AgentDetail`은 `ApiClient.getAgent()`·`AgentService.getById()`가 v1부터 반환값으로 쓰고 있었으나 **정의가 없었다.** `Agent`에 하위 Task와 v2 신규 필드 2종을 더한 형태로 확정한다.
 
 ---
 
@@ -487,9 +524,9 @@ interface Project {
 
 // 부수효과: status_changes 기록
 interface StatusChangeInsert {
-  entityType: "project";
+  entityType: EntityType;   // 6종 — DES-003 v2.1 §3-5
   entityId: string;         // ← project.id
-  fromStatus: string;       // ← "" (최초 생성)
+  fromStatus: string | null;  // ← null (최초 생성 — 이전 상태가 없다)
   toStatus: "ready";
   changedBy: "system";
   changedAt: string;        // ← project.createdAt 동일
@@ -679,6 +716,7 @@ sequenceDiagram
     participant S as AgentService
     participant PR as ProjectRepo
     participant AR as AgentRepo
+    participant CS as ConversationService
     participant SCR as StatusChangeRepo
     participant DB as SQLite
 
@@ -697,6 +735,10 @@ sequenceDiagram
             AR-->>S: throw AGENT_NAME_CONFLICT
         else 성공
             DB-->>AR: AgentRow
+            Note over S,DB: 아래 3단계는 하나의 트랜잭션
+            S->>CS: conversationService.createForAgent(agent.id)
+            CS->>DB: INSERT INTO conversations<br>(channel_type='agent', entity_id=agent.id, status='active')
+            Note over DB: CH-AGENT 개설 (D-09 · DES-007 v2 §5)
             S->>SCR: statusChangeRepo.insert(...)
             S->>S: config = JSON.parse(row.config)
             S-->>R: Agent
@@ -705,6 +747,9 @@ sequenceDiagram
         end
     end
 ```
+
+> **Agent 생성은 채널 개설을 동반한다 (v2.1 보완).** DES-001 v3가 `AgentService → ConversationService` 의존을 추가한 근거가 이것인데, v2 시퀀스는 §13(삭제)만 개정하고 생성 경로를 v1 상태로 두어 `createForAgent()`가 **어느 시퀀스에서도 호출되지 않는 상태**였다.
+> 트랜잭션으로 묶는다. Agent만 만들어지고 채널이 없으면 `cm chat agent <id>`가 빈 채널을 만나 실패한다.
 
 ```typescript
 interface CreateAgentInput {
@@ -766,7 +811,7 @@ sequenceDiagram
 
 | 레이어 | 함수 | 핵심 로직 |
 |--------|------|----------|
-| Service | `agentService.updateStatus(id, newStatus)` | ① findById ② validateTransition ③ 가드 체크 ④ updateStatus ⑤ 이력 기록 ⑥ 캐스케이드 |
+| Service | `agentService.updateStatus(id, newStatus)` | ① findById ② validateTransition ③ 가드 체크 ④ updateStatus ⑤ 이력 기록 ⑥ 캐스케이드 ⑦ **채널 전이** (v2.1) |
 | StateMachine | `validateTransition("agent", from, to)` | `AGENT_TRANSITIONS[from].includes(to)` |
 
 ```typescript
@@ -785,7 +830,18 @@ function checkParentActive(agent: AgentRow, project: ProjectRow): void {
 // 캐스케이드 규칙
 // Agent → Cancelled: 소속 활성 Task 일괄 Cancelled
 // Agent → Paused:    소속 활성 Task 일괄 Paused
+
+// 채널 전이 (v2.1 보완) — DES-007 v2 §8 엔티티 간 상태 연동
+// Agent → Completed / Cancelled: CH-AGENT를 readonly로 전환 (삭제하지 않는다 — 감사 추적)
+async function syncConversationOnStatus(agentId: string, newStatus: AgentStatus) {
+  if (newStatus === "completed" || newStatus === "cancelled") {
+    await conversationService.markReadonly(agentId);
+  }
+}
+// ⑤ 이력 기록과 같은 트랜잭션. 커밋 후 WS 브로드캐스트 (DES-001 §Cross-Cutting)
 ```
+
+> **`markReadonly()`도 v2까지 호출 지점이 없었다 (v2.1 보완).** DES-007 v2 §8이 "Agent → Completed/Cancelled ⇒ CH-AGENT `readonly`"를 규정했으나, 그 전이를 일으키는 시퀀스가 이 문서에 없어 **`readonly` 상태에 도달할 경로가 존재하지 않았다.**
 
 ---
 
@@ -954,9 +1010,9 @@ interface ListStatusChangesOpts {
 
 interface StatusChange {
   id: number;               // ← AUTOINCREMENT PK
-  entityType: EntityType;
+  entityType: EntityType;   // 6종 — project·agent·task·conversation·approval·stage
   entityId: string;         // ← UUID
-  fromStatus: string;       // ← 최초 생성 시 ""
+  fromStatus: string | null;  // ← 최초 생성 시 null (DES-003 v2.1 §3-5)
   toStatus: string;
   changedBy: string;        // ← "user" | "system"
   changedAt: string;        // ← ISO 8601
@@ -1203,10 +1259,11 @@ sequenceDiagram
 |------|-----|------|
 | 실행 주기 | 60초 | 30분 타임아웃에 충분한 해상도 |
 | 대상 | `status='pending'` AND `deadline_at <= now` | `high`는 `deadline_at`이 NULL이라 자동 제외 |
-| **`APV-GATE` 제외** | 등급 검사로 차단 | DES-014 §3-2 · DES-003 v2 CHECK 제약 |
+| **`APV-GATE` 제외** | **이중 방어** — ① `APV-GATE`는 등급 `high` 고정이라 `deadline_at`이 NULL이므로 위 조회 조건에 애초에 잡히지 않는다 ② 그럼에도 잡 내부에서 유형을 한 번 더 검사한다 | DES-014 §3-2 · DES-003 v2 CHECK (2)(4) |
 | 기록 | `MSG-05` 시스템 이벤트 | 자동 진행이 대화에 보여야 한다 |
 
-> **⚠ 배치 위치가 아직 설계에 없다.** 이 잡이 Fastify 프로세스 내부 타이머인지 별도 워커인지 DES-001 아키텍처에 정의되어야 한다. 본 문서는 **동작만** 정의한다. → §미해결
+> **✅ 배치 위치 확정 (DES-001 v3 ADR-012)**: **Fastify 프로세스 내부 `setInterval` 타이머**. 서버 `ready` 훅에서 `start()`, Graceful Shutdown에서 가장 먼저 `stop()`. 별도 워커안은 SQLite 단일 쓰기자 전제와 충돌해 기각되었다.
+> 이전 tick이 끝나지 않았으면 건너뛰고, tick 내부 예외는 로깅 후 삼켜 서버를 죽이지 않는다.
 
 ---
 
@@ -1368,7 +1425,7 @@ class ApprovalTimeoutJob {
 }
 ```
 
-> **배치 위치는 DES-001에서 확정한다.** Fastify 프로세스 내부 타이머인지 별도 워커인지에 따라 `start()` 호출 지점이 달라진다.
+> **배치 위치는 확정되었다 (DES-001 v3 ADR-012).** Fastify 프로세스 내부 타이머. `start()`는 서버 `ready` 훅, `stop()`은 Graceful Shutdown 2단계에서 호출한다.
 
 ### WebSocket Hub — v2 신규 (`src/backend/ws/`)
 
@@ -1480,3 +1537,4 @@ function getAllowedTransitions(entityType: EntityType, fromStatus: string): stri
 | v1 | 2026-08-24 | 최초 작성 — 13개 기능 시퀀스 + 전체 함수 시그니처 |
 | — | 2026-09-01 | Git 동기화 + 승인 반영 필요 항목 주석 추가 (내용 변경 없음) |
 | **v2** | 2026-09-01 | **승인 반영 개정.** 대화·승인·진행 **타입 27종 추가**(DES-002 v2 §6 JSON Schema 도출의 입력), **시퀀스 4종 신규**(§14 대화 송수신 · §15 의사결정 요청·응답 · §16 승인 게이트 검증 · §17 타임아웃 자동 진행), **§13 Agent 삭제를 D-27 기준으로 개정**(CASCADE → 아카이브, 스냅샷 선기록 순서 명시).<br>Service 5종 · Job 1종 · WebSocketHub 시그니처 추가. 커서 페이지네이션 `limit+1` 판정 규칙 명시. 미해결 4건 등록 |
+| **v2.1** | 2026-09-02 | **교차 검증 정정 — "계약서에 없는 계약" 해소.**<br>**미정의 타입 4종 보완** — `Pagination`·`ListAgentsOpts`·`ListTasksOpts`·`AgentDetail`. 넷 다 v1부터 함수 시그니처에서 **사용만 되고 정의가 없었다.** DES-002 v2 §6-1이 "JSON Schema는 이 문서 타입에서 도출"이라 규정하므로 스키마 생성이 불가능한 상태였다.<br>**채널 생명주기 시퀀스 2건 보완** — §7 Agent 생성 시 `createForAgent()`, §8 Agent 종료 시 `markReadonly()`. v2는 §13(삭제)만 개정해 **두 함수가 어느 시퀀스에서도 호출되지 않았고**, `readonly` 상태에 도달할 경로가 없었다.<br>`fromStatus`를 `null`로 통일(§3 시퀀스와 타입 블록이 `null`/`""`로 갈렸다), `entityType`을 6종으로 확장(DES-003 v2.1 §3-5). **§17·Jobs의 "배치 위치 미정" 주석 정정**(ADR-012로 이미 확정), `APV-GATE` 제외를 **이중 방어**로 정확히 기술 |

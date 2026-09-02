@@ -1,7 +1,7 @@
 # DES-007 상태 흐름도
 
 > Phase 1: 기반 구축
-> 버전: **v2 (2026-09-01)** — 승인 반영. 상태 머신 3개 → 6개
+> 버전: **v2.1 (2026-09-02)** — 교차 검증 정정. §9 브로드캐스트 규약 통일
 > **원본**: [Notion DES-007](https://app.notion.com/p/3c5d066504ec8174881ad45d1cc9918b) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -329,12 +329,16 @@ CLAUDE.md 스킬 전환 모드에서 파생한다. **저장하지 않는다.**
 | 전이 | 채널 | 이벤트 |
 |------|------|--------|
 | Project · Agent · Task 상태 변경 | `WS /ws` | `status:changed` |
-| 승인 생성 | `WS /ws` + `WS /ws/conversations/:id` | `approval:created` |
-| 승인 처리 | 동일 | `approval:updated` |
+| 승인 생성 | `WS /ws` | `approval:created` |
+| 승인 생성 (채널) | `WS /ws/conversations/:id` | `message:new` (MSG-04, `approvalId` 포함) |
+| 승인 처리 | `WS /ws` + `WS /ws/conversations/:id` | `approval:updated` |
 | 단계 상태 변경 | `WS /ws` | `stage:changed` |
 | 새 메시지 | `WS /ws/conversations/:id` | `message:new` |
 
 > **기록이 먼저, 발행이 나중이다.** 트랜잭션 커밋 후 브로드캐스트한다. 순서가 뒤바뀌면 롤백된 전이가 화면에 표시된다.
+>
+> **채널 WS에는 `approval:created`를 보내지 않는다 (v2.1 정정).** 승인 요청은 `MSG-04` 메시지로 발행되고(DES-004 v2 §15), 그 메시지가 `message:new`로 이미 채널에 전달된다. 프런트는 `approvalId`가 채워진 `MSG-04`를 액션 버튼 카드로 렌더링한다(DES-002 v2 §4). 같은 사건을 두 이벤트로 보내면 카드가 중복 렌더링된다.
+> v2는 이 표에 양쪽 발행으로 적고 DES-002 §4·DES-004 `ConversationEvent`는 `approval:updated`만 두어 세 문서가 갈려 있었다. **DES-002·DES-004 쪽으로 통일한다.**
 > Web Push 발송 대상 판정(NTF-05 등)은 **Phase 2**다. 터널링 연기로 원격 알림 자체가 Phase 2로 밀렸다.
 
 ---
@@ -368,3 +372,4 @@ CLAUDE.md 스킬 전환 모드에서 파생한다. **저장하지 않는다.**
 | v1.1 | 2026-08-24 | Phase 2+ 확장 고려사항 추가 |
 | — | 2026-09-01 | Git 동기화 + 승인 반영 필요 항목 주석 추가 (내용 변경 없음) |
 | **v2** | 2026-09-01 | **승인 반영 개정.** 상태 머신 3개 → **6개** — 대화 채널(§5) · 승인(§6) · 단계(§7) 신설.<br>**Agent `waiting`에 `waiting_reason` 3종 도입**(D-11, 신규 상태 미생성), 진입·이탈 규칙 8건 정의. **반려는 `running`으로 복귀하지 않는다**를 명시.<br>**애플리케이션 책임 전이 1건 명시**(§5-1 Agent 삭제 → 대화 아카이브, FK 없음 · 순서 필수 · 단위 테스트로 강제).<br>엔티티 연동 4건 추가, 전이 이벤트 브로드캐스트 규약 신설(§9). 미해결 2건 등록 |
+| **v2.1** | 2026-09-02 | **교차 검증 정정.** §9 브로드캐스트 표에서 **채널 WS의 `approval:created` 제거** — 승인 요청은 `MSG-04`의 `message:new`로 이미 전달되며, 양쪽 발행은 카드 중복 렌더링을 낳는다. DES-002 v2 §4 · DES-004 v2 `ConversationEvent`와 통일 |
