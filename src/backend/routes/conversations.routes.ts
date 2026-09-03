@@ -12,9 +12,17 @@ import { MessageRepository } from '../repositories/message.repository.js';
 import { ConversationService } from '../services/conversation.service.js';
 
 /**
- * 대화 라우트 — FR-026 · FR-027 (REST 5종. `WS /ws/conversations/:id`는 다음 위임 범위다)
+ * 대화 라우트 — FR-026 · FR-027 (REST 5종 + D-2 읽음 처리 1종.
+ * `WS /ws/conversations/:id`는 다음 위임 범위다)
  *
- * 정의 원본: DES-002 v2.2 §3-2 · §4 · DES-004 v2.2 §14 · §전체 함수 시그니처 요약
+ * 정의 원본: DES-002 v2.2 §3-2 · §4 · DES-004 v2.2 §14 · §전체 함수 시그니처 요약 ·
+ * D-2(테스트 스킬 9단계 수정 루프 2차, 대표 승인) — `PATCH /api/conversations/:id/read` 신설
+ *
+ * ── D-2 결함 — 읽음 처리 경로 부재 ────────────────────────────
+ * `ConversationService.markRead()`(DEV-D-05)는 이미 구현돼 있었으나 이를
+ * 호출하는 HTTP 라우트가 0건이라 `last_read_at`이 영원히 갱신되지 않았다.
+ * 여기서는 기존 `markRead()`를 그대로 배선한다 — 새로 만들지 않는다.
+ * 조회(`GET .../messages`)에 쓰기(읽음 갱신)를 섞지 않는다(기각된 B안).
  *
  * 레이어 규칙 2(src/CLAUDE.md): Routes는 Service만 호출한다 (Repository 직접 접근 금지).
  * `:id`는 UUID 전용이다 — `main` 별칭 경로는 만들지 않는다(DES-002 §4).
@@ -153,6 +161,31 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     async (request): Promise<CursorResponse<Message>> => {
       const { cursor, limit, direction } = request.query;
       return service.listMessages(request.params.id, { cursor, limit, direction });
+    },
+  );
+
+  /**
+   * D-2 — 읽음 포인터 갱신(ConversationService.markRead, DEV-D-05). 존재하지
+   * 않는 채널은 404 CONVERSATION_NOT_FOUND(기존 라우트들과 같은 에러 형식,
+   * DES-009 4필드 고정). readonly·archived 채널도 조회는 항상 허용되므로
+   * 상태를 검사하지 않는다(`markRead`가 존재 여부만 확인한다).
+   */
+  app.patch<{ Params: IdParams }>(
+    '/api/conversations/:id/read',
+    {
+      onRequest: [app.authenticate],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['id'],
+          additionalProperties: false,
+          properties: { id: { type: 'string' } },
+        },
+      },
+    },
+    async (request): Promise<{ data: Conversation }> => {
+      const data = await service.markRead(request.params.id);
+      return { data };
     },
   );
 

@@ -272,11 +272,13 @@ export async function runChatMainOpen(opts: { client: CliApiClient }): Promise<C
     const conversation = listRes.data[0];
     if (!conversation) return { ok: false, reason: 'conversation_not_found' };
 
-    // 읽음 포인터 갱신(ConversationService.markRead, DEV-D-05)은 여기서 호출해야
-    // 하지만 `conversations.routes.ts`에 이를 노출하는 HTTP 경로가 없다(REST
-    // 5종에 markRead 없음 — routes 파일 실사 확인). 백엔드는 완결 범위라 CLI가
-    // 라우트를 새로 만들 수 없어 이 호출은 생략한다. 미해결 사항으로 보고한다.
     const messages = await fetchRecentMessages(opts.client, conversation.id);
+    // 읽음 포인터 갱신 — D-2, PATCH /api/conversations/:id/read
+    // (ConversationService.markRead, DEV-D-05). 실패해도 채널 조회 자체를
+    // 막지 않을 이유가 없다 — 서버 unreachable·인증 만료라면 아래 catch가
+    // 이미 그 경로를 §8 공통 에러로 처리한다(REV-H-04와 같은 원칙: 네트워크
+    // 호출은 반드시 이 try 안에 있어야 한다).
+    await opts.client.patch<{ data: Conversation }>(`/conversations/${conversation.id}/read`);
     return { ok: true, conversation, messages };
   } catch (err) {
     return mapCommonApiError(err, opts.client);
@@ -317,6 +319,9 @@ export async function runChatAgentOpen(opts: {
     const messages = readonly
       ? await fetchAllMessagesChronological(opts.client, agent.conversationId)
       : await fetchRecentMessages(opts.client, agent.conversationId);
+
+    // 읽음 포인터 갱신 — D-2 (runChatMainOpen과 같은 이유로 이 try 안에 둔다)
+    await opts.client.patch<{ data: Conversation }>(`/conversations/${agent.conversationId}/read`);
 
     return { ok: true, agent, messages, readonly };
   } catch (err) {
@@ -666,6 +671,11 @@ export async function runChatLog(opts: {
       sinceMs === undefined
         ? all
         : all.filter((m) => new Date(m.createdAt).getTime() >= (sinceMs as number));
+
+    // 읽음 포인터 갱신 — D-2 (runChatMainOpen과 같은 이유로 이 try 안에 둔다)
+    await opts.client.patch<{ data: Conversation }>(
+      `/conversations/${resolved.conversation.id}/read`,
+    );
 
     return { ok: true, conversation: resolved.conversation, messages, since: opts.since };
   } catch (err) {

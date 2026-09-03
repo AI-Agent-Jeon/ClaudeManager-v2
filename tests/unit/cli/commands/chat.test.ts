@@ -37,7 +37,12 @@ function fakeClient(overrides: Partial<CliApiClient> = {}): CliApiClient {
     baseUrl: 'http://127.0.0.1:3000/api',
     get: vi.fn().mockRejectedValue(new Error('not stubbed')),
     post: vi.fn().mockRejectedValue(new Error('not stubbed')),
-    patch: vi.fn().mockRejectedValue(new Error('not stubbed')),
+    // D-2 — `cm chat main/agent/log`가 채널을 연 뒤 항상 PATCH .../read를
+    // 호출한다(runChatMainOpen 등). 이 호출을 명시적으로 검증하지 않는
+    // 대다수 테스트가 `patch`를 오버라이드하지 않아도 깨지지 않도록
+    // 기본값은 성공으로 둔다 — `not stubbed` 거부였던 이전 기본값은
+    // 이 호출 경로가 생기기 전(HTTP 라우트가 없던 시절)의 값이다.
+    patch: vi.fn().mockResolvedValue({ data: {} }),
     delete: vi.fn().mockRejectedValue(new Error('not stubbed')),
     ...overrides,
   };
@@ -183,6 +188,20 @@ describe('runChatMainOpen', () => {
       serverUrl: 'http://127.0.0.1:3000/api',
     });
   });
+
+  it('D-2 — 메시지를 조회한 뒤 읽음 포인터를 갱신한다 (PATCH .../read)', async () => {
+    const get = routedGet((path) => {
+      if (path.includes('type=main')) return { data: [CONV_MAIN] };
+      return { data: [], cursor: { next: null, hasMore: false } };
+    });
+    const patch = vi.fn().mockResolvedValue({ data: CONV_MAIN });
+    const client = fakeClient({ get, patch });
+
+    const result = await runChatMainOpen({ client });
+
+    expect(result.ok).toBe(true);
+    expect(patch).toHaveBeenCalledWith(`/conversations/${CONV_MAIN.id}/read`);
+  });
 });
 
 describe('runChatAgentOpen', () => {
@@ -252,6 +271,20 @@ describe('runChatAgentOpen', () => {
       });
     },
   );
+
+  it('D-2 — 메시지를 조회한 뒤 읽음 포인터를 갱신한다 (PATCH .../read)', async () => {
+    const get = routedGet((path) => {
+      if (path === `/agents/${AGENT_DETAIL.id}`) return { data: AGENT_DETAIL };
+      return { data: [], cursor: { next: null, hasMore: false } };
+    });
+    const patch = vi.fn().mockResolvedValue({ data: CONV_AGENT });
+    const client = fakeClient({ get, patch });
+
+    const result = await runChatAgentOpen({ client, idOrPrefix: AGENT_DETAIL.id });
+
+    expect(result.ok).toBe(true);
+    expect(patch).toHaveBeenCalledWith(`/conversations/${CONV_AGENT.id}/read`);
+  });
 });
 
 describe('runChatRepl', () => {
@@ -452,6 +485,21 @@ describe('runChatLog — 커서 페이지네이션', () => {
     const client = fakeClient({ get: vi.fn().mockResolvedValue({ data: [] }) });
     const result = await runChatLog({ client, idOrPrefix: 'zzzzzzzz' });
     expect(result).toEqual({ ok: false, reason: 'not_found', id: 'zzzzzzzz' });
+  });
+
+  it('D-2 — 메시지를 조회한 뒤 읽음 포인터를 갱신한다 (PATCH .../read)', async () => {
+    const get = routedGet((path) => {
+      if (path.includes('status=active')) return { data: [CONV_MAIN] };
+      if (path.includes('status=')) return { data: [] };
+      return { data: [], cursor: { next: null, hasMore: false } };
+    });
+    const patch = vi.fn().mockResolvedValue({ data: CONV_MAIN });
+    const client = fakeClient({ get, patch });
+
+    const result = await runChatLog({ client, idOrPrefix: CONV_MAIN.id });
+
+    expect(result.ok).toBe(true);
+    expect(patch).toHaveBeenCalledWith(`/conversations/${CONV_MAIN.id}/read`);
   });
 });
 

@@ -79,6 +79,23 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 - `ArtifactRepository` — `findById()`·`findByCode()`·`findByCodes()`(코드 배열 일괄 조회, 빈 배열은 쿼리 없이 빈
   배열)·`findMany()`(`syncStatus` 4분기를 SQL `WHERE` 조건으로 번역하는 `SYNC_STATUS_CLAUSE`)·`upsert()`(`ON
   CONFLICT(code) DO UPDATE`, `status`는 SET 절에 없어 갱신 시 유지된다)
+- **D-2 — `PATCH /api/conversations/:id/read` 신설** (test 스킬 9단계 수정 루프 2차, 대표 승인 A안).
+  `ConversationService.markRead()`(DEV-D-05)는 이미 구현돼 있었으나 호출하는 HTTP 라우트가 0건이라
+  `last_read_at`이 영원히 갱신되지 않고 `unreadCount`가 줄지 않던 결함(런타임 재현 확정 — 아래 미반영
+  항목 참조)을 해소한다. 기각된 B안(`GET .../messages`가 부수효과로 `markRead` 호출)은 "조회에 쓰기를
+  섞지 마라"는 판단으로 배제했다. 기존 `markRead()`를 그대로 배선했고(새 서비스 메서드 없음), 인증
+  필요·존재하지 않는 채널 404 `CONVERSATION_NOT_FOUND`는 기존 5종 라우트와 같은 에러 형식이다.
+  readonly·archived 채널도 읽음 처리는 허용한다(조회는 항상 허용되는 기존 원칙과 동일)
+- **D-3 — `POST /api/artifacts` 신설** (test 스킬 9단계 수정 루프 2차, 대표 승인). 조사 결과 코드
+  결함이 아니라 설계 공백이었다 — `ArtifactService.upsert()`는 구현돼 있었으나 호출자가 0건이라
+  `artifacts` 테이블에 행을 만드는 경로가 설계 어디에도 없어 FR-031 전체가 도달 불가능했다. 기존
+  `upsert()`를 그대로 배선했다(새 서비스 메서드 없음) — `code` UNIQUE 기준 upsert, 신규면
+  `status='draft'` 삽입·기존이면 갱신. `status`는 요청 스키마에 없다(`additionalProperties: false`가
+  주입을 차단) — upsert가 승인 흐름이 관리하는 값을 되돌리지 않는 기존 불변식을 HTTP 경계에서도
+  지킨다. `syncStatus`도 요청·저장 스키마에 없다 — `notionUrl`·`gitPath` 유무에서 파생하는 기존
+  `deriveSyncStatus()`를 그대로 쓴다. `stageId`가 존재하지 않는 `stages(id)`를 가리키면 Repository의
+  기존 FK 위반 변환이 `404 STAGE_NOT_FOUND`로 응답한다. 필수 필드: `stageId`(uuid)·`code`·`title`.
+  선택 필드: `notionUrl`·`gitPath`
 - **서버 기동 부트스트랩 (`FR-026`·`FR-029`, Layer R-1)** — `BootstrapService.seed()`가 CH-MAIN 채널·Phase 1(`기반
   구축`)·7단계를 멱등 시드한다(전부 `ConversationService.ensureMainChannel()`·`PhaseService.ensurePhase()` 경유,
   Repository 직접 접근 없음 — 레이어 규칙 7). 순서 고정 — `conversations` → `phases`(+`stages`, `stages.phase_id`가
@@ -182,6 +199,11 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   신뢰할 수 없는 경로를 읽는 상황이 아니라 대표가 터미널에 직접 입력한 로컬 저장 위치라 위협 모델이 다르다)
 - `cm chat search "<검색어>"`(SCR-CH13) — 2자 미만은 서버를 부르지 않고 즉시 거부. 결과 0건 포함 항상
   "한국어 조사로 인한 미검출 가능성" 경고블록을 붙인다(DES-003 §3-3 미해결 사항)
+- **D-2 — `cm chat main`·`cm chat agent`·`cm chat log`가 메시지를 조회한 뒤 새로 생긴 `PATCH
+  /api/conversations/:id/read`를 호출해 읽음 포인터를 갱신한다** (test 스킬 9단계 수정 루프 2차, 대표
+  승인). 아래 미반영 항목에 있던 "라우트가 없어 호출을 생략했다"가 해소됐다. 세 함수 모두 메시지 조회와
+  같은 try 블록 안에서 호출한다 — REV-H-04가 지적한 "네트워크 호출이 보호되지 않은 채 남는" 패턴을
+  재발시키지 않는다(서버 unreachable·인증 만료는 기존 catch가 그대로 처리)
 - MSG-01~06 렌더링(DES-013 §3-1·3-2) — REPL 초기 로드는 MSG-03을 4단 접기, `cm chat log`는 4단 전개.
   MSG-04(의사결정 요청)는 "그냥 흘러가면 안 되는" 메시지라 항상 `⚠` 카드 + 승인ID(8자) + `cm decide` 안내로
   강조한다(EVT-CH01-4). `Message` 응답 스키마엔 승인의 선택지·안건 상세가 없어(그 필드는 `approvals` 리소스
@@ -253,6 +275,11 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
 - `cm artifacts [--sync <상태>]`(SCR-CH10) — `notion_only`·`missing`을 표에서 구분해 표시하고,
   `notion_only`가 있으면 "동기화 누락이지 프로세스 위반이 아니다" 경고블록을 붙인다(`cm review`와 표기
   일치, 개발 지시 §3(3))
+- **D-3 — `cm artifacts add` 신설** (CLI 화면 33 → 34, test 스킬 9단계 수정 루프 2차, 대표 승인).
+  `POST /api/artifacts`를 배선한다. `--stage <uuid>` 대신 `--skill <skill>`을 받아 `stage
+  start/complete <skill>`이 이미 쓰는 `resolveStageBySkill` 헬퍼로 현재 Phase의 실제 단계 id로
+  해석한다 — 대표가 raw UUID를 외워 입력할 필요가 없고 존재하지 않는 stage를 상정하는 경로 자체가
+  차단된다. 필수 옵션 `--skill`·`--code`·`--title`, 선택 옵션 `--notion-url`·`--git-path`
 - `src/cli/runtime.ts`의 `notFoundBlock()` — 조사 "를"을 하드코딩해 "승인 건를"·"대화 채널를"처럼
   받침 있는 라벨에서 틀리던 것을 받침 유무(`chooseParticle`, 완성형 한글 음절 코드포인트 28로 나눈
   나머지)로 "을"/"를"을 고르도록 교정(그룹 B·C에 걸친 사전 결함 — 공용 헬퍼라 아무도 손대지 않고
@@ -396,13 +423,6 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   조회하면 N+1이 되어 하지 않았다. "상태" 컬럼(approved/rejected 등)이 "결정"은 대신 보여주지만
   "사유"·"처리시각"은 `cm review <id>`로 따로 봐야 한다(§3-1 "응답 필드에 없는 것을 화면에 만들지
   않는다" 원칙을 목록 API 응답을 원본으로 우선했다 — 명세 불일치, 대표 결정 필요)
-- **`ConversationService.markRead()`를 호출하는 HTTP 경로가 없다** — `conversations.routes.ts`의 REST
-  5종(목록·메시지 조회·전송·검색·내보내기) 중 읽음 포인터를 갱신하는 라우트가 없다(DES-004 §전체 함수
-  시그니처 요약엔 `markRead(id): Promise<Conversation>`가 있지만 어느 라우트에서도 부르지 않는다). `cm chat
-  main`·`cm chat agent`가 채널을 열어도 `GET /api/conversations`의 `unreadCount`가 줄지 않는다 — CLI가
-  라우트를 새로 만들 권한이 없어(`src/backend/**`는 완결 범위) 호출을 생략했다. 백엔드에 `PATCH
-  /api/conversations/:id/read` 신설 또는 `GET .../messages`가 부수효과로 `markRead`를 호출하도록 보완이
-  필요하다(대표 결정 필요 — 등급 보통)
 - `cm chat` MSG-04 카드가 `⚠` 강조·승인ID·`cm decide` 안내까지만 보여준다 — SCR-CH01 표시 데이터가 요구하는
   "선택지"는 `Message` 응답 스키마에 없고 `approvals` 리소스에만 있다. `cm review`/`cm decide`(그룹 C)가
   구현되면 그쪽에서 전체 상세를 본다

@@ -171,6 +171,87 @@ describe('GET /api/conversations/:id/messages — 커서 페이지네이션 (FR-
   });
 });
 
+describe('PATCH /api/conversations/:id/read — D-2 (읽음 처리 경로 신설)', () => {
+  it('Given 미읽음 메시지가 있을 때 When 읽음 처리하면 Then unreadCount가 0으로 줄어든다 (이 결함의 본질)', async () => {
+    const convId = seedMainChannel(app.db);
+    seedMessage(app.db, convId);
+    seedMessage(app.db, convId);
+
+    const before = await app.inject({
+      method: 'GET',
+      url: '/api/conversations?type=main',
+      headers: authHeader(),
+    });
+    expect(before.json().data[0].unreadCount).toBe(2);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/conversations/${convId}/read`,
+      headers: authHeader(),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.unreadCount).toBe(0);
+
+    const after = await app.inject({
+      method: 'GET',
+      url: '/api/conversations?type=main',
+      headers: authHeader(),
+    });
+    expect(after.json().data[0].unreadCount).toBe(0);
+  });
+
+  it('읽은 뒤 last_read_at이 NULL에서 실제 값으로 바뀐다', async () => {
+    const convId = seedMainChannel(app.db);
+    const before = app.db
+      .prepare('SELECT last_read_at FROM conversations WHERE id = ?')
+      .get(convId) as { last_read_at: string | null };
+    expect(before.last_read_at).toBeNull();
+
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/conversations/${convId}/read`,
+      headers: authHeader(),
+    });
+
+    const after = app.db
+      .prepare('SELECT last_read_at FROM conversations WHERE id = ?')
+      .get(convId) as { last_read_at: string | null };
+    expect(after.last_read_at).not.toBeNull();
+  });
+
+  it('readonly·archived 채널도 읽음 처리는 허용된다 (조회는 항상 허용)', async () => {
+    const projectId = seedProject(app.db);
+    const agentId = seedAgent(app.db, projectId);
+    const convId = seedAgentChannel(app.db, agentId);
+    app.db.prepare("UPDATE conversations SET status = 'readonly' WHERE id = ?").run(convId);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/conversations/${convId}/read`,
+      headers: authHeader(),
+    });
+
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('Given 존재하지 않는 채널 When 읽음 처리하면 Then 404 CONVERSATION_NOT_FOUND', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/conversations/${crypto.randomUUID()}/read`,
+      headers: authHeader(),
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().code).toBe('CONVERSATION_NOT_FOUND');
+  });
+
+  it('인증 없이 요청하면 401', async () => {
+    const convId = seedMainChannel(app.db);
+    const res = await app.inject({ method: 'PATCH', url: `/api/conversations/${convId}/read` });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
 describe('POST /api/conversations/:id/messages — FR-027', () => {
   it('Given active 채널일 때 When 본문을 보내면 Then 201과 MSG-01/ceo 고정 메시지가 반환된다', async () => {
     const convId = seedMainChannel(app.db);
