@@ -167,6 +167,22 @@ async function findStageSkill(client: CliApiClient, stageId: string): Promise<st
   }
 }
 
+/**
+ * NEW-02 — `requested_by`는 자유 문자열이라 `'main'`처럼 Agent 행이 없는
+ * 요청자가 있다(DEV-D-06). Agent로 실재하는지 조회해, 재개될 Agent가 애초에
+ * 없는 경우에는 "Agent가 재개됩니다" 문구를 내보내지 않기 위한 판별이다.
+ * 위 `findStageSkill`과 같은 "조용한 실패" 원칙 — 조회 실패(네트워크 등)를
+ * "존재하지 않음"으로 취급해도 결과가 안전한 방향(문구 생략)으로만 어긋난다.
+ */
+async function requesterIsAgent(client: CliApiClient, requestedBy: string): Promise<boolean> {
+  try {
+    await client.get(`/agents/${requestedBy}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function fetchApprovalQuietly(
   client: CliApiClient,
   id: string,
@@ -466,7 +482,7 @@ function presentReview(result: ApprovalReviewResult, deps: CommandDeps): void {
 // ─────────────────────────────────────────────
 
 export type ApprovalDecideResult =
-  | { ok: true; approval: ApprovalDetail; nextStageSkill?: string }
+  | { ok: true; approval: ApprovalDetail; nextStageSkill?: string; requesterIsAgent: boolean }
   | { ok: false; reason: 'not_found'; id: string }
   | { ok: false; reason: 'ambiguous'; candidates: Array<{ id: string; label: string }> }
   | { ok: false; reason: 'reason_required' }
@@ -523,7 +539,15 @@ export async function runDecide(opts: {
       nextStageSkill = await findStageSkill(opts.client, approval.stageId);
     }
 
-    return { ok: true, approval, nextStageSkill };
+    // NEW-02 — 반려는 Agent가 애초에 재개되지 않으므로(서비스 §rejected 분기,
+    // 위 주석 참조) 조회가 필요 없다. 승인/조건부일 때만 요청자가 실재
+    // Agent인지 확인해 "재개됩니다" 문구의 정확성을 보장한다.
+    const requesterIsAgentFlag =
+      approval.status === ApprovalStatus.REJECTED
+        ? false
+        : await requesterIsAgent(opts.client, approval.requestedBy);
+
+    return { ok: true, approval, nextStageSkill, requesterIsAgent: requesterIsAgentFlag };
   } catch (err) {
     return mapDecideError(err, opts, resolvedId);
   }
@@ -611,19 +635,23 @@ function presentDecide(result: ApprovalDecideResult, deps: CommandDeps): void {
     ['처리 시각', a.resolvedAt ? formatTimestamp(a.resolvedAt) : '-'],
   ]);
 
-  // EVT-CH05-1·2 — 승인/조건부는 Agent가 재개되고, 반려는 대기 상태를 유지한다
+  // EVT-CH05-1·2 — 승인/조건부는 Agent가 재개되고, 반려는 대기 상태를 유지한다.
+  // NEW-02 — `requestedBy`가 실재 Agent가 아니면(예: 'main') 재개될 Agent가
+  // 애초에 없으므로, 그 경우는 문구 자체를 생략한다(§requesterIsAgent).
   const agentLine =
     a.status === ApprovalStatus.REJECTED
       ? 'Agent는 대기 상태를 유지합니다'
-      : 'Agent가 재개됩니다 (waiting → running)';
+      : result.requesterIsAgent
+        ? 'Agent가 재개됩니다 (waiting → running)'
+        : null;
 
   const stageBlock = result.nextStageSkill
     ? `\n\n다음 단계: ${result.nextStageSkill}\n  cm stage start ${result.nextStageSkill}`
     : '';
 
-  deps.log(
-    successBlock(`${decisionLabel(a.status)} 완료`, `${fields}\n\n${agentLine}${stageBlock}`),
-  );
+  const body = agentLine ? `${fields}\n\n${agentLine}${stageBlock}` : `${fields}${stageBlock}`;
+
+  deps.log(successBlock(`${decisionLabel(a.status)} 완료`, body));
   deps.setExitCode(0);
 }
 

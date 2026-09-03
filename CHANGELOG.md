@@ -421,6 +421,12 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   읽을 수 있게 출력하고, 실패하면 `process.exitCode = 1`로 끝나 배포 스크립트가 실패를 감지할 수 있다.
   `src/cli/index.ts`와 같은 Node ESM entry-point 판별 관용구(`isMainModule`)로 감싸 `plugins/database.ts`가
   `runMigrations`를 `import`할 때(서버 기동마다) CLI 본체가 중복 실행되지 않도록 했다
+- **NEW-02 — `cm decide`가 재개될 Agent가 없는 요청자에게도 "Agent가 재개됩니다"를 출력하던 문제** —
+  `requested_by`는 자유 문자열이라 `'main'`처럼 Agent 행이 없는 요청자가 있다(DEV-D-06). 승인·조건부
+  응답이면 `presentDecide`가 요청자의 실재 여부와 무관하게 무조건 "Agent가 재개됩니다 (waiting →
+  running)" 문구를 출력해, 실제로는 재개될 Agent가 없는 경우까지 오도했다. `runDecide`가 반려가 아닌
+  응답에 한해 `GET /agents/:id`로 요청자가 실재 Agent인지 확인(`requesterIsAgent`)하고, `presentDecide`는
+  그 결과가 참일 때만 문구를 출력하도록 교정했다(요청자가 Agent가 아니면 문구 자체를 생략한다)
 
 ### Security
 
