@@ -68,7 +68,7 @@ export function buildApprovalService(app: FastifyInstance): ApprovalService {
     conversationRepo,
   );
 
-  // ApprovalService → AgentService는 "허용된 Service 간 의존 4건"이다 (v3.2 · R-02)
+  // ApprovalService → AgentService는 "허용된 Service 간 의존 5건"이다 (v3.2 · R-02)
   // ArtifactRepository는 Service를 거치지 않고 직접 주입한다 — Layer 2-9
   // approval.service.ts 상단 "의존 설계 메모 5)" 참조.
   return new ApprovalService(

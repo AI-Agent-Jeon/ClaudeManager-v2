@@ -19,7 +19,7 @@ import { STAGE_ORDER, sortBySkillOrder, toStageSummary } from './stage-mapper.js
  *
  * ── 교차 애그리거트 읽기 판단 메모 ──────────────────────────────
  * `artifactCount`·`pendingApprovalCount`·`gate`는 "허용된 Service 간 의존
- * 4건"(Stage→Approval→Agent→Conversation)에 없는 PhaseService→ApprovalService·
+ * 4건"(Stage→Approval→Agent→{Conversation, Task})에 없는 PhaseService→ApprovalService·
  * →ArtifactService 의존을 요구한다. Service 의존을 늘리지 않기 위해, 이
  * 읽기 전용 집계는 **PhaseRepository가 JOIN으로 직접** 구한다(N+1 없이 한
  * 쿼리) — AgentService가 ConversationRepository를 읽기 목적으로 직접

@@ -66,7 +66,7 @@ export function registerAgentRoutes(app: FastifyInstance): void {
     conversationRepo,
   );
 
-  // ApprovalService → AgentService는 "허용된 Service 간 의존 4건"이다 (v3.2 · R-02).
+  // ApprovalService → AgentService는 "허용된 Service 간 의존 5건"이다 (v3.2 · R-02).
   // DELETE 핸들러(R-04)가 이 인스턴스로 승인 마감을 조율한다 — 같은 app.db
   // 커넥션을 쓰는 같은 프로세스 안이라 트랜잭션 경계를 공유할 수 있다.
   const approvalService = new ApprovalService(

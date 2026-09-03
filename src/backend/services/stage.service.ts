@@ -39,7 +39,7 @@ import { isGateRequired, sortBySkillOrder, toStageSummary } from './stage-mapper
  *    `src/shared/state-transitions.ts`를 조회만 한다 — 하드코딩 금지)
  * 2. 게이트 필요 단계면 APV-GATE가 approved인가 → 403 GATE_NOT_PASSED
  *    (`ApprovalService.findGateApproval()` 경유 — `StageService → ApprovalService`는
- *    "허용된 Service 간 의존 4건" 중 하나다. ApprovalRepository를 직접 만지지 않는다)
+ *    "허용된 Service 간 의존 5건" 중 하나다. ApprovalRepository를 직접 만지지 않는다)
  * 3. WIP=1 위반인데 면제(`wip_waivers`)가 없는가 → 409 WIP_VIOLATION
  *
  * ── gate.required 파생 ────────────────────────────────────────
@@ -71,7 +71,7 @@ export class StageService {
     /** 트랜잭션 경계 전용. 쿼리는 Repository가 한다 */
     private readonly db: BetterSqlite3.Database,
     private readonly phaseRepo: PhaseRepository,
-    /** "허용된 Service 간 의존 4건" 중 하나(Stage→Approval) — Repository를 직접 만지지 않는다 */
+    /** "허용된 Service 간 의존 5건" 중 하나(Stage→Approval) — Repository를 직접 만지지 않는다 */
     private readonly approvalService: ApprovalService,
     private readonly statusChangeRepo: StatusChangeRepository,
     private readonly hub: WebSocketHub,

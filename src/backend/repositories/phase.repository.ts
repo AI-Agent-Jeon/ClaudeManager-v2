@@ -13,7 +13,7 @@ import { AppError } from '../utils/errors.js';
  * ── 교차 애그리거트 읽기 판단 메모 ──────────────────────────────
  * `GET /api/phases/current`는 stage마다 artifactCount(artifacts)·
  * pendingApprovalCount(approvals)·gate(approvals)가 필요하다. 그런데
- * "허용된 Service 간 의존 4건"(Stage→Approval→Agent→Conversation)에
+ * "허용된 Service 간 의존 5건"(Stage→Approval→Agent→{Conversation, Task})에
  * PhaseService→ApprovalService도 →ArtifactService도 없다.
  * → 이 읽기는 Service 간 의존을 늘리지 않고 **Repository가 JOIN으로 직접
  * 집계**한다. AgentService가 ConversationRepository를 읽기 목적으로 직접

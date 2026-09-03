@@ -30,7 +30,7 @@ interface IdParams {
 
 /**
  * `StageService`를 조립한다. `StageService → ApprovalService`는 "허용된
- * Service 간 의존 4건" 중 하나다(DES-001 v3.2). `approvals.routes.ts`가
+ * Service 간 의존 5건" 중 하나다(DES-001 v3.2). `approvals.routes.ts`가
  * export하는 `buildApprovalService`를 그대로 재사용한다 — `agents.routes.ts`가
  * 이미 같은 패턴을 쓴다(별도 인스턴스를 조립해 쓰되 빌더 함수는 공유).
  */

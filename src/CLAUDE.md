@@ -42,8 +42,11 @@ Bootstrap  →  Services                 (동일)
    묶어야 하는데 그 방향이 순환을 만들면, Service끼리 부르지 말고 Route
    핸들러가 `db.transaction()` 안에서 순서대로 호출한다
 
-**허용된 Service 간 의존 4건** (순환 아님)
-`Stage → Approval → Agent → Conversation`
+**허용된 Service 간 의존 5건** (순환 아님)
+`Stage → Approval → Agent → {Conversation, Task}`
+
+`Agent → Task`는 R2-02(대표 결정 2026-09-03)로 추가됐다 — 캐스케이드가 `taskRepo`에
+상태 전이를 직접 쓰던 것이 레이어 규칙 10 위반이었다. 커밋 `8e47972`
 
 ## 디렉토리 역할
 

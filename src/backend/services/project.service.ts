@@ -21,7 +21,7 @@ import { getAllowedTransitions, validateTransition } from '../utils/state-machin
  * 상태 변경 이력 기록은 StatusChangeRepository를 직접 호출한다
  * (StatusChangeService를 거치지 않는다 — DES-004 §3·§6 시퀀스 다이어그램이
  * `S->>SCR: statusChangeRepo.insert(...)`로 명시한다. Service→Service 호출로
- * 두면 "허용된 Service 간 의존 4건"(Stage→Approval→Agent→Conversation)에
+ * 두면 "허용된 Service 간 의존 5건"(Stage→Approval→Agent→{Conversation, Task})에
  * 없는 의존이 하나 늘어난다).
  *
  * **Project → Agent → Task 캐스케이드는 여기 없다 (FIND-01 수정 · v2 · REV-M-01).**
@@ -63,7 +63,7 @@ function toProject(row: ProjectRow): Project {
 /**
  * AgentService의 toAgent와 같은 변환이다. Service 간 매핑 함수를 공유하지
  * 않는 것은 project.service.ts가 StatusChangeRepository를 직접 쓰는 것과
- * 같은 원칙이다 — "허용된 Service 간 의존 4건" 밖의 결합을 늘리지 않는다.
+ * 같은 원칙이다 — "허용된 Service 간 의존 5건" 밖의 결합을 늘리지 않는다.
  */
 function toAgentDto(row: AgentRow): Agent {
   return {

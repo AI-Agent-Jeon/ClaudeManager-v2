@@ -38,7 +38,7 @@ import { validateTransition } from '../utils/state-machine.js';
 import type { WebSocketHub } from '../ws/hub.js';
 import type { AgentService } from './agent.service.js';
 // 파생 로직(deriveSyncStatus)만 가져온다 — ArtifactService 인스턴스를 주입받지
-// 않으므로 "허용된 Service 간 의존 4건"을 늘리지 않는다(순수 함수 import는
+// 않으므로 "허용된 Service 간 의존 5건"을 늘리지 않는다(순수 함수 import는
 // DB·상태에 접근하지 않아 Service 간 호출 그래프에 간선을 추가하지 않는다).
 // 3NF 파생 규칙(DES-003 §4-4)의 단일 원본은 artifact.service.ts 하나뿐이어야
 // 하므로, 여기서 같은 로직을 복제하지 않고 그 함수를 그대로 재사용한다.
@@ -72,7 +72,7 @@ import { deriveSyncStatus } from './artifact.service.js';
  *
  * 3) `StatusChangeRepository`를 직접 쓰고 `StatusChangeService`를 거치지 않는다
  *    — `project.service.ts`·`agent.service.ts`와 같은 이유다: Service→Service
- *    호출로 두면 "허용된 Service 간 의존 4건" 밖의 결합이 늘어난다.
+ *    호출로 두면 "허용된 Service 간 의존 5건" 밖의 결합이 늘어난다.
  *
  * 4) Agent 상태 전이(`AgentService.updateStatus`)는 **트랜잭션 밖에서, 커밋 후**
  *    호출한다. DES-001 v3 §Cross-Cutting "전이 이벤트 발행은 트랜잭션 커밋 후"
@@ -83,7 +83,7 @@ import { deriveSyncStatus } from './artifact.service.js';
  * 5) `ArtifactRepository`도 같은 원칙으로 직접 주입받는다(Layer 2-9). 승인
  *    상세(`ApprovalDetail.artifacts`)를 조립하려면 산출물 코드 배열을 실제
  *    행으로 펼쳐야 하는데, `ApprovalService → ArtifactService`는 "허용된
- *    Service 간 의존 4건"(`Stage→Approval→Agent→Conversation`)에 없다.
+ *    Service 간 의존 5건"(`Stage→Approval→Agent→{Conversation, Task}`)에 없다.
  *    Layer 2-7(`PhaseService`가 집계를 위해 Repository를 직접 읽은 선례)과
  *    같은 판단이다 — 읽기 전용 조회는 Service 계층을 거치지 않고
  *    Repository를 직접 주입받는다.

@@ -14,7 +14,7 @@ import { getAllowedTransitions, validateTransition } from '../utils/state-machin
  *
  * 레이어 규칙(src/CLAUDE.md §레이어 규칙): Service는 Repository만 호출한다.
  * PARENT_NOT_ACTIVE 가드는 AgentService를 부르지 않고 AgentRepository를
- * 직접 조회한다 — Task→Agent는 "허용된 Service 간 의존 4건"에 없다.
+ * 직접 조회한다 — Task→Agent는 "허용된 Service 간 의존 5건"에 없다.
  *
  * R2-02 (2026-09-03, 대표 결정 b안) — `cascadeStatusSync()`가 Agent →
  * Task 상태 캐스케이드를 소유한다. 이전에는 `AgentService.cascadeToTasks()`가
