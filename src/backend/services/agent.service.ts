@@ -327,6 +327,58 @@ export class AgentService {
     return this.deleteSync(id);
   }
 
+  /**
+   * FIND-01 수정 — Project → Agent → Task 캐스케이드 진입점(대표 결정 B안).
+   *
+   * `projects.routes.ts`의 PATCH `.../status` 핸들러가 `ProjectService
+   * .updateStatusSync()` 직후, 같은 `db.transaction()` 콜백 **안에서** 호출한다
+   * (DES-001 v3.2 §레이어 규칙 9 — 교차 애그리거트 트랜잭션은 Route가 조율한다.
+   * `agents.routes.ts`의 DELETE 핸들러(R-04)와 같은 패턴).
+   *
+   * Agent 상태 전이 쓰기를 이 Service(소유 Service)가 맡는다 — 이전
+   * `ProjectService.cascadeToAgents()`는 `agentRepo.updateStatus`를 직접 불러
+   * DES-001 v3.3 §레이어 규칙 10("상태 전이·검증이 붙은 쓰기는 Repository
+   * 직접 접근 예외 대상이 아니다")을 어겼다(REV-M-01). 후보 조회
+   * (`agentRepo.findActiveByProjectId`)는 AgentService 자신의 Repository이므로
+   * 크로스 애그리거트 문제가 없다.
+   *
+   * Task로의 전파는 새로 만들지 않고 기존 `cascadeToTasks()`를 그대로
+   * 재사용한다(중첩 캐스케이드) — DES-004 §6 "각 Agent 캐스케이드는 다시
+   * 해당 Agent의 Task로 전파".
+   *
+   * `async`가 아니다 — better-sqlite3의 `db.transaction()`은 동기 콜백만
+   * 지원한다. 여기 `await`를 쓰면 컴파일이 실패해 "트랜잭션 콜백 안에서
+   * 안전하다"는 전제를 타입 체커가 강제한다(R-04·Layer 2-6과 같은 패턴).
+   */
+  cascadeFromProjectSync(
+    projectId: string,
+    projectNewStatus: typeof ProjectStatus.CANCELLED | typeof ProjectStatus.PAUSED,
+    now: string,
+  ): void {
+    const targetStatus =
+      projectNewStatus === ProjectStatus.CANCELLED ? AgentStatus.CANCELLED : AgentStatus.PAUSED;
+    const candidates = this.agentRepo.findActiveByProjectId(projectId);
+
+    for (const agent of candidates) {
+      // 상태 머신이 허용하지 않는 전이는 건너뛴다(예: waiting은 paused로 갈 수 없다)
+      if (!validateTransition('agent', agent.status, targetStatus)) continue;
+
+      // 캐스케이드 대상은 cancelled/paused다 — waiting이 아니므로 waitingReason은 null이다
+      this.agentRepo.updateStatus(agent.id, targetStatus, null, now);
+      this.statusChangeRepo.insert({
+        entityType: EntityType.AGENT,
+        entityId: agent.id,
+        fromStatus: agent.status,
+        toStatus: targetStatus,
+        changedBy: 'system',
+        changedAt: now,
+      });
+
+      // 중첩 캐스케이드: Agent → Task (DES-004 §6, 기존 cascadeToTasks 재사용)
+      this.cascadeToTasks(agent.id, targetStatus, now);
+    }
+  }
+
   private cascadeToTasks(agentId: string, agentNewStatus: AgentStatus, now: string): void {
     const targetStatus =
       agentNewStatus === AgentStatus.CANCELLED ? TaskStatus.CANCELLED : TaskStatus.PAUSED;

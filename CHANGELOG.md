@@ -341,6 +341,24 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   `ConversationService.search()`에서 검색어를 FTS5 문자열 리터럴로 이스케이프(`"` → `""` 후 전체를
   `"..."`로 감싼다)해 구문 오류를 원천 차단했다 — 검색 동작이 구(phrase) 검색으로 통일되므로 근거를
   소스 주석에 남겼다. `messageRepo.search` 호출도 방어적으로 try/catch해 400 `VALIDATION_ERROR`로 변환한다
+- **FIND-01 — `ProjectService`의 캐스케이드가 Agent까지만 전이시키고 Task로 전파하지 않던 문제**
+  (대표 결정 B안). 런타임으로 재현됐다 — Project를 `cancelled`로 만들면 `agents.status=cancelled`가
+  되는데 `tasks.status=in_progress`가 잔존했다(DES-004 §6 "각 Agent 캐스케이드는 다시 해당 Agent의
+  Task로 전파"를 어김). 함께 드러난 REV-M-01(`ProjectService.cascadeToAgents()`가
+  `agentRepo.updateStatus`로 Agent 상태 전이를 직접 쓰던 것 — DES-001 v3.3 §레이어 규칙 10 "상태
+  전이·검증이 붙은 쓰기는 Repository 직접 접근 예외 대상이 아니다"를 어김)도 함께 해소했다.
+  `ProjectService.cascadeToAgents()`를 제거하고 `updateStatusSync()`(Project 자신의 전이만)만 남겼다.
+  `AgentService`에 `cascadeFromProjectSync()`를 신설해 Agent 상태 전이 쓰기를 소유 Service로 되돌리고,
+  내부에서 기존 `cascadeToTasks()`를 그대로 재사용해 Task까지 전파한다(새 Task 캐스케이드 로직은
+  만들지 않았다). `projects.routes.ts`의 PATCH `.../status` 핸들러가 `db.transaction()` 안에서
+  `updateStatusSync()` → `cascadeFromProjectSync()`를 조율한다(DES-001 §레이어 규칙 9 — R-04와 같은
+  패턴). 둘 다 `async`가 아니므로 내부에 `await`를 쓰면 컴파일이 실패해 "트랜잭션 콜백 안에서
+  안전하다"는 전제를 타입 체커가 강제한다(DEV-D-07 선례). REV-H-02(승인 커밋 후 요청자 Agent 전이
+  실패가 422를 던지지 않도록 한 수정)가 의존하는 `AgentService.updateStatus()`(비동기 공개 API)는
+  건드리지 않아 상호 회귀가 없다 — 전체 테스트로 확인했다. Project→Agent→Task 3계층 캐스케이드
+  회귀·상태 머신 가드(예: `waiting → paused` 건너뜀)·트랜잭션 롤백(캐스케이드 도중 실패 시 3계층
+  전건 미반영)·`status_changes` 감사 로그를 `tests/unit/backend/routes/project-cascade.test.ts`로
+  검증한다
 
 ### Security
 

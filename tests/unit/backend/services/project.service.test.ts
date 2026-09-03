@@ -162,31 +162,21 @@ describe('ProjectService.updateStatus — FR-006', () => {
     }
   });
 
-  it('Given Project가 running/waiting Agent를 가질 때 When cancelled로 전이하면 Then 소속 Agent가 일괄 cancelled된다 (DES-007 §8)', async () => {
-    const created = await service.create({ name: '캐스케이드-취소' });
+  // Project → Agent → Task 캐스케이드는 더 이상 ProjectService가 소유하지 않는다
+  // (FIND-01 수정 · REV-M-01 — DES-001 v3.3 §레이어 규칙 10 "상태 전이·검증이
+  // 붙은 쓰기는 Repository 직접 접근 예외 대상이 아니다"). `updateStatus`/
+  // `updateStatusSync`는 이제 Project 자신의 전이만 처리한다 — 캐스케이드는
+  // `projects.routes.ts`가 `db.transaction()` 안에서 `AgentService
+  // .cascadeFromProjectSync()`와 조율한다(DES-001 §레이어 규칙 9). 캐스케이드
+  // 회귀·롤백·상태 머신 가드·감사 로그 테스트는
+  // `tests/unit/backend/routes/project-cascade.test.ts`로 옮겼다.
+  it('Given Project가 running Agent를 가질 때 When cancelled로 전이해도 Then ProjectService 단독 호출은 Agent를 건드리지 않는다 (캐스케이드는 Route 소관)', async () => {
+    const created = await service.create({ name: '캐스케이드-분리' });
     await service.updateStatus(created.id, 'running');
     const runningAgentId = seedAgent(testDb.db, created.id, { status: 'running' });
-    const waitingAgentId = seedAgent(testDb.db, created.id, { status: 'waiting' });
-    const createdAgentId = seedAgent(testDb.db, created.id, { status: 'created' });
 
     await service.updateStatus(created.id, 'cancelled');
 
-    expect(agentRepo.findById(runningAgentId)?.status).toBe('cancelled');
-    expect(agentRepo.findById(waitingAgentId)?.status).toBe('cancelled');
-    // created는 "실행 중/대기 중"이 아니라 캐스케이드 대상이 아니다
-    expect(agentRepo.findById(createdAgentId)?.status).toBe('created');
-  });
-
-  it('Given Project가 running Agent를 가질 때 When paused로 전이하면 Then running Agent만 paused된다 (DES-007 §8)', async () => {
-    const created = await service.create({ name: '캐스케이드-일시정지' });
-    await service.updateStatus(created.id, 'running');
-    const runningAgentId = seedAgent(testDb.db, created.id, { status: 'running' });
-    const waitingAgentId = seedAgent(testDb.db, created.id, { status: 'waiting' });
-
-    await service.updateStatus(created.id, 'paused');
-
-    expect(agentRepo.findById(runningAgentId)?.status).toBe('paused');
-    // waiting → paused는 AGENT_TRANSITIONS에 없어 캐스케이드에서 제외된다
-    expect(agentRepo.findById(waitingAgentId)?.status).toBe('waiting');
+    expect(agentRepo.findById(runningAgentId)?.status).toBe('running');
   });
 });

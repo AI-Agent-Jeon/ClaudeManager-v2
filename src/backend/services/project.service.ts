@@ -1,4 +1,9 @@
-import { AgentStatus, EntityType, ErrorCode, type ProjectStatus } from '../../shared/constants.js';
+import {
+  type AgentStatus,
+  EntityType,
+  ErrorCode,
+  type ProjectStatus,
+} from '../../shared/constants.js';
 import type { Agent, Pagination, Project, ProjectDetail } from '../../shared/types.js';
 import type { AgentRepository, AgentRow } from '../repositories/agent.repository.js';
 import type { ProjectRepository, ProjectRow } from '../repositories/project.repository.js';
@@ -18,6 +23,19 @@ import { getAllowedTransitions, validateTransition } from '../utils/state-machin
  * `S->>SCR: statusChangeRepo.insert(...)`로 명시한다. Service→Service 호출로
  * 두면 "허용된 Service 간 의존 4건"(Stage→Approval→Agent→Conversation)에
  * 없는 의존이 하나 늘어난다).
+ *
+ * **Project → Agent → Task 캐스케이드는 여기 없다 (FIND-01 수정 · v2 · REV-M-01).**
+ * 이전 구현(`cascadeToAgents`)은 `agentRepo.updateStatus`로 Agent의 상태 전이를
+ * 직접 썼다 — DES-001 v3.3 §레이어 규칙 10 "상태 전이·검증이 붙은 쓰기는
+ * Repository 직접 접근 예외 대상이 아니다"를 어겼다(그 애그리거트가 지키는
+ * 상태 머신 가드를 우회할 위험). `agentRepo`는 이제 읽기 전용(`getById`의
+ * Agent 목록 조회, 레이어 규칙 10-(b))으로만 남는다.
+ *
+ * 캐스케이드는 `projects.routes.ts`의 PATCH `.../status` 핸들러가
+ * `db.transaction()` 안에서 `updateStatusSync()`(여기) → `AgentService
+ * .cascadeFromProjectSync()`(소유 Service) 순으로 조율한다(DES-001 §레이어
+ * 규칙 9 · R-04와 같은 패턴). `AgentService.cascadeFromProjectSync()`가 다시
+ * 기존 `cascadeToTasks()`를 재사용해 Task까지 전파한다.
  */
 
 export interface CreateProjectInput {
@@ -127,8 +145,15 @@ export class ProjectService {
     return { ...toProject(row), agents };
   }
 
-  /** FR-006 */
-  async updateStatus(id: string, newStatus: ProjectStatus): Promise<Project> {
+  /**
+   * FR-006 — 동기 코어. Project 자신의 상태 전이만 처리한다(캐스케이드는
+   * 여기 없다 — 클래스 상단 주석 참조). `db.transaction()`의 동기 콜백
+   * 안에서 안전하게 호출할 수 있도록 `async`를 붙이지 않는다 — `async`가
+   * 붙으면 내부에 실제 `await`가 없어도 항상 Promise로 감싸여, 콜백이
+   * 반환값을 동기적으로 꺼낼 수 없다(DES-001 §Repository 직접 접근 예외 (a)
+   * 원자성 근거와 같은 이유 · R-04·Layer 2-6과 같은 패턴).
+   */
+  updateStatusSync(id: string, newStatus: ProjectStatus, now: string): Project {
     const row = this.projectRepo.findById(id);
     if (!row) {
       throw new AppError(404, ErrorCode.PROJECT_NOT_FOUND, `프로젝트를 찾을 수 없습니다: ${id}`);
@@ -147,7 +172,6 @@ export class ProjectService {
       );
     }
 
-    const now = new Date().toISOString();
     const updated = this.projectRepo.updateStatus(id, newStatus, now);
 
     // API를 통한 전이는 대표(사용자)가 발생시킨 것이다 — 최초 생성의 'system'과 구분한다 (DES-004 §12 changedBy)
@@ -160,33 +184,17 @@ export class ProjectService {
       changedAt: now,
     });
 
-    // 캐스케이드: Project → cancelled/paused ⇒ 소속 활성(running/waiting) Agent 일괄 전이 (DES-007 v2 §8)
-    if (newStatus === 'cancelled' || newStatus === 'paused') {
-      this.cascadeToAgents(id, newStatus, now);
-    }
-
     return toProject(updated);
   }
 
-  private cascadeToAgents(projectId: string, projectNewStatus: string, now: string): void {
-    const targetStatus =
-      projectNewStatus === 'cancelled' ? AgentStatus.CANCELLED : AgentStatus.PAUSED;
-    const candidates = this.agentRepo.findActiveByProjectId(projectId);
-
-    for (const agent of candidates) {
-      // 상태 머신이 허용하지 않는 전이는 건너뛴다(예: waiting은 paused로 갈 수 없다)
-      if (!validateTransition('agent', agent.status, targetStatus)) continue;
-
-      // 캐스케이드 대상은 cancelled/paused다 — waiting이 아니므로 waitingReason은 null이다
-      this.agentRepo.updateStatus(agent.id, targetStatus, null, now);
-      this.statusChangeRepo.insert({
-        entityType: EntityType.AGENT,
-        entityId: agent.id,
-        fromStatus: agent.status,
-        toStatus: targetStatus,
-        changedBy: 'system',
-        changedAt: now,
-      });
-    }
+  /**
+   * FR-006 — 공개 API. 캐스케이드 조율이 필요 없는 단독 호출에 쓰는 얇은
+   * 래퍼다(`agents.routes.ts`의 `AgentService.delete()`가 `deleteSync()`를
+   * 감싸는 것과 같은 모양). `PATCH /api/projects/:id/status`는 캐스케이드가
+   * 필요하므로 이 메서드가 아니라 `updateStatusSync()`를 Route에서 직접
+   * 호출한다(DES-001 §레이어 규칙 9).
+   */
+  async updateStatus(id: string, newStatus: ProjectStatus): Promise<Project> {
+    return this.updateStatusSync(id, newStatus, new Date().toISOString());
   }
 }
