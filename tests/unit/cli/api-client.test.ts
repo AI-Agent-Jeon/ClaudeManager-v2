@@ -224,3 +224,123 @@ describe('ApiClient — 빈 본문', () => {
     expect(res).toBeUndefined();
   });
 });
+
+/**
+ * D-4 커버리지 보강 — `getText()`는 `GET /api/conversations/:id/export`
+ * 전용 경로(DES-002 §4, `{data:...}` 봉투를 쓰지 않는 유일한 엔드포인트)라
+ * 기존 테스트가 전혀 다루지 않았다(0% 커버리지). `send()`와 같은 에러
+ * 처리·인증 헤더·ECONNREFUSED 분기를 갖고 있어 같은 시나리오를 반복한다.
+ */
+describe('ApiClient — getText (마크다운 내보내기 전용 경로)', () => {
+  it('text/markdown 본문을 JSON 파싱 없이 그대로 돌려준다', async () => {
+    mockAgent
+      .get(ORIGIN)
+      .intercept({ path: '/api/conversations/c1/export', method: 'GET' })
+      .reply(200, '# 제목\n\n본문', { headers: { 'content-type': 'text/markdown' } });
+
+    const client = new ApiClient({ baseUrl: BASE_URL, dispatcher: mockAgent });
+    const res = await client.getText('/conversations/c1/export');
+
+    expect(res).toBe('# 제목\n\n본문');
+  });
+
+  it('토큰이 있으면 Authorization 헤더를 싣는다', async () => {
+    mockAgent
+      .get(ORIGIN)
+      .intercept({
+        path: '/api/conversations/c1/export',
+        method: 'GET',
+        headers: { authorization: 'Bearer tok' },
+      })
+      .reply(200, 'body');
+
+    const client = new ApiClient({ baseUrl: BASE_URL, dispatcher: mockAgent, token: 'tok' });
+    const res = await client.getText('/conversations/c1/export');
+
+    expect(res).toBe('body');
+  });
+
+  it('4xx 응답은 JSON 에러 봉투로 파싱해 ApiRequestError를 던진다', async () => {
+    mockAgent
+      .get(ORIGIN)
+      .intercept({ path: '/api/conversations/missing/export', method: 'GET' })
+      .reply(404, {
+        statusCode: 404,
+        error: 'Not Found',
+        message: '대화 채널을 찾을 수 없습니다',
+        code: 'CONVERSATION_NOT_FOUND',
+      });
+
+    const client = new ApiClient({ baseUrl: BASE_URL, dispatcher: mockAgent });
+
+    await expect(client.getText('/conversations/missing/export')).rejects.toMatchObject({
+      statusCode: 404,
+      code: 'CONVERSATION_NOT_FOUND',
+    });
+  });
+
+  it('ECONNREFUSED는 ServerUnreachableError로 구분한다', async () => {
+    mockAgent
+      .get(ORIGIN)
+      .intercept({ path: '/api/conversations/c1/export', method: 'GET' })
+      .replyWithError(
+        Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:3000'), {
+          code: 'ECONNREFUSED',
+        }),
+      );
+
+    const client = new ApiClient({ baseUrl: BASE_URL, dispatcher: mockAgent });
+
+    await expect(client.getText('/conversations/c1/export')).rejects.toBeInstanceOf(
+      ServerUnreachableError,
+    );
+  });
+
+  it('ECONNREFUSED가 아닌 네트워크 오류는 그대로 던진다', async () => {
+    mockAgent
+      .get(ORIGIN)
+      .intercept({ path: '/api/conversations/c1/export', method: 'GET' })
+      .replyWithError(new Error('boom'));
+
+    const client = new ApiClient({ baseUrl: BASE_URL, dispatcher: mockAgent });
+
+    await expect(client.getText('/conversations/c1/export')).rejects.not.toBeInstanceOf(
+      ServerUnreachableError,
+    );
+  });
+});
+
+describe('ApiClient — 원인 체인 탐색·비-JSON 본문 방어', () => {
+  it('ECONNREFUSED가 cause 체인 2단계 아래에 있어도 ServerUnreachableError로 구분한다', async () => {
+    // isConnectionRefused()는 cause 체인을 최대 5단계까지 훑는다(api-client.ts §189-202) —
+    // undici가 원인을 감싸 던지는 실제 상황(예: AggregateError → cause → 원본 소켓 에러)을 재현한다
+    const inner = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:3000'), {
+      code: 'ECONNREFUSED',
+    });
+    const outer = new Error('wrapped');
+    (outer as unknown as { cause: unknown }).cause = inner;
+
+    mockAgent.get(ORIGIN).intercept({ path: '/api/health', method: 'GET' }).replyWithError(outer);
+
+    const client = new ApiClient({ baseUrl: BASE_URL, dispatcher: mockAgent });
+
+    await expect(client.get('/health')).rejects.toBeInstanceOf(ServerUnreachableError);
+  });
+
+  it('본문이 JSON이 아니면 파싱 실패를 삼키고 기본 에러 메시지·코드로 채운다', async () => {
+    mockAgent
+      .get(ORIGIN)
+      .intercept({ path: '/api/health', method: 'GET' })
+      .reply(500, 'internal server error (not json)', {
+        headers: { 'content-type': 'text/plain' },
+      });
+
+    const client = new ApiClient({ baseUrl: BASE_URL, dispatcher: mockAgent });
+
+    await expect(client.get('/health')).rejects.toMatchObject({
+      statusCode: 500,
+      code: 'INTERNAL_ERROR',
+      message: '알 수 없는 오류가 발생했습니다',
+    });
+  });
+});

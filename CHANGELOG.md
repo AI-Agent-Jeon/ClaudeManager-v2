@@ -284,6 +284,17 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   받침 있는 라벨에서 틀리던 것을 받침 유무(`chooseParticle`, 완성형 한글 음절 코드포인트 28로 나눈
   나머지)로 "을"/"를"을 고르도록 교정(그룹 B·C에 걸친 사전 결함 — 공용 헬퍼라 아무도 손대지 않고
   있었다). 한글 음절로 끝나지 않는 라벨(`Agent`·`Project`)은 기존 동작(을 "를")을 그대로 유지한다
+- **D-4 — Must 스토리 커버리지 보강** (test 스킬 9단계 수정 루프 2차, 대표 승인). `src/cli/api-client.ts`
+  (INT-001, 74.61%→98.46%)·`src/cli/commands/**`(INT-003, 70.93%→83.40%)가 80% 기준에 미달했다.
+  `getText()`(`GET /api/conversations/:id/export` 전용 경로, `{data:...}` 봉투를 안 쓰는 유일한
+  엔드포인트라 기존 테스트가 전혀 다루지 않아 0%였다)와 `isConnectionRefused()`의 cause 체인 2단계
+  탐색·`parseJsonSafely()`의 비-JSON 본문 방어를 추가로 검증했다. `cli/commands`는 `agent.ts`
+  (60.75%→93.85%)·`project.ts`(61.61%→96.42%)·`task.ts`(59.33%→95.26%)가 가장 낮았다 — 세 파일
+  모두 run*() 함수의 에러 매핑 분기(validation·서버 unreachable·unauthenticated·resolveId 중
+  서버 unreachable)와, run*() 유닛 테스트만으로는 히트하지 않는 present*() 렌더링 함수(성공/실패
+  분기별 출력)를 `registerXCommand`를 통한 CLI 레벨 테스트로 커버했다. 프로덕션 코드는 건드리지
+  않았고(테스트 전용 보강), 이 과정에서 발견된 실제 버그는 없다. 전체 커버리지는 85.85%→91.6%로
+  오히려 상승했다
 
 ### Changed
 

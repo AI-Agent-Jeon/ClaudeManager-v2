@@ -139,6 +139,56 @@ describe('runAgentCreate', () => {
     expect(result.reason).toBe('ambiguous_project');
     expect(client.post).not.toHaveBeenCalled();
   });
+
+  it('D-4 — VALIDATION_ERROR면 message를 보존한 validation을 돌려준다', async () => {
+    const client = fakeClient({
+      post: vi
+        .fn()
+        .mockRejectedValue(
+          new ApiRequestError(400, ErrorCode.VALIDATION_ERROR, '이름은 필수입니다'),
+        ),
+    });
+
+    const result = await runAgentCreate({ client, projectId: PROJECT_A.id, name: '' });
+
+    expect(result).toEqual({ ok: false, reason: 'validation', message: '이름은 필수입니다' });
+  });
+
+  it('D-4 — POST가 서버 unreachable이면 mapCommonApiError로 위임한다', async () => {
+    const client = fakeClient({
+      post: vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000/api')),
+    });
+
+    const result = await runAgentCreate({ client, projectId: PROJECT_A.id, name: 'X' });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'server_unreachable',
+      serverUrl: 'http://127.0.0.1:3000/api',
+    });
+  });
+
+  it(
+    'D-4/REV-H-03 — 프로젝트 ID 접두어 해석(resolveId) 중 서버가 끊기면 ' +
+      'uncaught로 전파되지 않고 server_unreachable로 매핑된다',
+    async () => {
+      const client = fakeClient({
+        get: vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000/api')),
+      });
+
+      const result = await runAgentCreate({
+        client,
+        projectId: PROJECT_A.id.slice(0, 8),
+        name: 'X',
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        reason: 'server_unreachable',
+        serverUrl: 'http://127.0.0.1:3000/api',
+      });
+    },
+  );
 });
 
 describe('runAgentList', () => {
@@ -194,6 +244,29 @@ describe('runAgentList', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
     expect(result.reason).toBe('server_unreachable');
+  });
+
+  it('D-4 — --project 접두어가 어떤 프로젝트와도 일치하지 않으면 not_found', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockResolvedValue({
+        data: [],
+        pagination: { page: 1, pageSize: 100, total: 0, totalPages: 1 },
+      }),
+    });
+
+    const result = await runAgentList({ client, projectId: 'zzzzzzzz', page: 1 });
+
+    expect(result).toEqual({ ok: false, reason: 'not_found', id: 'zzzzzzzz' });
+  });
+
+  it('D-4 — 목록 조회 자체가 UNAUTHORIZED면 unauthenticated', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockRejectedValue(new ApiRequestError(401, ErrorCode.UNAUTHORIZED, '인증 필요')),
+    });
+
+    const result = await runAgentList({ client, page: 1 });
+
+    expect(result).toEqual({ ok: false, reason: 'unauthenticated' });
   });
 });
 
@@ -340,6 +413,60 @@ describe('runAgentStatusChange', () => {
       allowed: ['running', 'cancelled'],
     });
   });
+
+  it('D-4 — 없는 Agent면 AGENT_NOT_FOUND를 not_found로 매핑한다', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockResolvedValue({ data: null }),
+      patch: vi.fn().mockRejectedValue(new ApiRequestError(404, ErrorCode.AGENT_NOT_FOUND, '없음')),
+    });
+
+    const result = await runAgentStatusChange({
+      client,
+      idOrPrefix: AGENT_A.id,
+      newStatus: 'cancelled',
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'not_found', id: AGENT_A.id });
+  });
+
+  it('D-4 — PATCH가 UNAUTHORIZED면 mapCommonApiError로 unauthenticated를 돌려준다', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockResolvedValue({ data: null }),
+      patch: vi
+        .fn()
+        .mockRejectedValue(new ApiRequestError(401, ErrorCode.UNAUTHORIZED, '인증 필요')),
+    });
+
+    const result = await runAgentStatusChange({
+      client,
+      idOrPrefix: AGENT_A.id,
+      newStatus: 'cancelled',
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'unauthenticated' });
+  });
+
+  it(
+    'D-4/REV-H-03 — ID 접두어 해석(resolveId) 중 서버가 끊기면 uncaught로 전파되지 않고 ' +
+      'server_unreachable로 매핑된다',
+    async () => {
+      const client = fakeClient({
+        get: vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000/api')),
+      });
+
+      const result = await runAgentStatusChange({
+        client,
+        idOrPrefix: AGENT_A.id.slice(0, 8),
+        newStatus: 'cancelled',
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        reason: 'server_unreachable',
+        serverUrl: 'http://127.0.0.1:3000/api',
+      });
+    },
+  );
 });
 
 describe('runAgentDelete', () => {
@@ -454,6 +581,69 @@ describe('runAgentDelete', () => {
 
     expect(result).toEqual({ ok: false, reason: 'not_found', id: AGENT_A.id });
   });
+
+  it('D-4 — 상세 조회 중 서버 unreachable이면 삭제를 시도하지 않고 server_unreachable', async () => {
+    const del = vi.fn();
+    const client = fakeClient({
+      get: vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000/api')),
+      delete: del,
+    });
+
+    const result = await runAgentDelete({
+      client,
+      idOrPrefix: AGENT_A.id,
+      force: true,
+      promptConfirm: vi.fn(),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'server_unreachable',
+      serverUrl: 'http://127.0.0.1:3000/api',
+    });
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it('D-4 — DELETE가 UNAUTHORIZED면 mapCommonApiError로 unauthenticated를 돌려준다', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockResolvedValue({ data: DetailWithTasks }),
+      delete: vi
+        .fn()
+        .mockRejectedValue(new ApiRequestError(401, ErrorCode.UNAUTHORIZED, '인증 필요')),
+    });
+
+    const result = await runAgentDelete({
+      client,
+      idOrPrefix: AGENT_A.id,
+      force: true,
+      promptConfirm: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'unauthenticated' });
+  });
+
+  it(
+    'D-4/REV-H-03 — ID 접두어 해석(resolveId) 중 서버가 끊기면 uncaught로 전파되지 않고 ' +
+      'server_unreachable로 매핑된다',
+    async () => {
+      const client = fakeClient({
+        get: vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000/api')),
+      });
+
+      const result = await runAgentDelete({
+        client,
+        idOrPrefix: AGENT_A.id.slice(0, 8),
+        force: true,
+        promptConfirm: vi.fn(),
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        reason: 'server_unreachable',
+        serverUrl: 'http://127.0.0.1:3000/api',
+      });
+    },
+  );
 });
 
 describe('registerAgentCommand — 출력·종료 코드', () => {
@@ -546,5 +736,275 @@ describe('registerAgentCommand — 출력·종료 코드', () => {
     const agent = program.commands.find((c) => c.name() === 'agent');
     const subNames = agent?.commands.map((c) => c.name());
     expect(subNames).toEqual(expect.arrayContaining(['create', 'list', 'status', 'delete']));
+  });
+
+  // D-4 커버리지 보강 — presentAgentCreate/List/Detail/StatusChange 각 실패
+  // 분기(switch case)는 run* 유닛 테스트가 아니라 registerAgentCommand를
+  // 통해 실제로 렌더링해야만 히트한다.
+  it('생성 — 프로젝트를 찾을 수 없으면 exit 1, notFoundBlock을 출력한다', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockResolvedValue({
+        data: [],
+        pagination: { page: 1, pageSize: 100, total: 0, totalPages: 1 },
+      }),
+    });
+    const { program, getExitCode, errors } = buildTestProgram(client);
+
+    await program.parseAsync(['agent', 'create', '--project', 'zzzzzzzz', '--name', 'X'], {
+      from: 'user',
+    });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('찾을 수 없습니다');
+  });
+
+  it('생성 — --project 접두어가 겹치면 exit 1, 후보 목록을 출력한다', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockResolvedValue({
+        data: [
+          { id: 'a1a1a1a1-0000-0000-0000-000000000001', name: 'A' },
+          { id: 'a1a1a1a2-0000-0000-0000-000000000002', name: 'B' },
+        ],
+        pagination: { page: 1, pageSize: 100, total: 2, totalPages: 1 },
+      }),
+    });
+    const { program, getExitCode, errors } = buildTestProgram(client);
+
+    await program.parseAsync(['agent', 'create', '--project', 'a1a1a1a', '--name', 'X'], {
+      from: 'user',
+    });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('여러 건과 일치합니다');
+  });
+
+  it('생성 — 이름 중복이면 exit 1', async () => {
+    const client = fakeClient({
+      post: vi
+        .fn()
+        .mockRejectedValue(new ApiRequestError(409, ErrorCode.AGENT_NAME_CONFLICT, '중복')),
+    });
+    const { program, getExitCode, errors } = buildTestProgram(client);
+
+    await program.parseAsync(['agent', 'create', '--project', PROJECT_A.id, '--name', '중복'], {
+      from: 'user',
+    });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('이미 존재하는 이름');
+  });
+
+  it('생성 — VALIDATION_ERROR면 exit 1, 서버 메시지를 그대로 출력한다', async () => {
+    const client = fakeClient({
+      post: vi
+        .fn()
+        .mockRejectedValue(
+          new ApiRequestError(400, ErrorCode.VALIDATION_ERROR, '이름은 필수입니다'),
+        ),
+    });
+    const { program, getExitCode, errors } = buildTestProgram(client);
+
+    await program.parseAsync(['agent', 'create', '--project', PROJECT_A.id, '--name', ''], {
+      from: 'user',
+    });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('이름은 필수입니다');
+  });
+
+  it('생성 — 서버 unreachable이면 exit 1, 안내 문구를 출력한다', async () => {
+    const client = fakeClient({
+      post: vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000/api')),
+    });
+    const { program, getExitCode, errors } = buildTestProgram(client);
+
+    await program.parseAsync(['agent', 'create', '--project', PROJECT_A.id, '--name', 'X'], {
+      from: 'user',
+    });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('서버에 연결할 수 없습니다');
+  });
+
+  it('생성 — UNAUTHORIZED면 exit 1, 인증 안내를 출력한다', async () => {
+    const client = fakeClient({
+      post: vi
+        .fn()
+        .mockRejectedValue(new ApiRequestError(401, ErrorCode.UNAUTHORIZED, '인증 필요')),
+    });
+    const { program, getExitCode, errors } = buildTestProgram(client);
+
+    await program.parseAsync(['agent', 'create', '--project', PROJECT_A.id, '--name', 'X'], {
+      from: 'user',
+    });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('인증이 필요합니다');
+  });
+
+  it('목록 — 결과가 없으면 exit 0, 안내 힌트를 출력한다', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockResolvedValue({
+        data: [],
+        pagination: { page: 1, pageSize: 20, total: 0, totalPages: 1 },
+      }),
+    });
+    const { program, getExitCode, logs } = buildTestProgram(client);
+
+    await program.parseAsync(['agent', 'list'], { from: 'user' });
+
+    expect(getExitCode()).toBe(0);
+    expect(logs.join('\n')).toContain('cm agent create --project');
+  });
+
+  it('목록 — 항목·필터가 있으면 표와 페이지 푸터를 출력한다', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockResolvedValue({
+        data: [AGENT_A],
+        pagination: { page: 1, pageSize: 20, total: 1, totalPages: 1 },
+      }),
+    });
+    const { program, getExitCode, logs } = buildTestProgram(client);
+
+    await program.parseAsync(['agent', 'list', '--status', 'created'], { from: 'user' });
+
+    expect(getExitCode()).toBe(0);
+    const out = logs.join('\n');
+    expect(out).toContain(AGENT_A.name);
+    expect(out).toContain('filtered by: created');
+  });
+
+  it('목록 — --project 접두어가 일치하지 않으면 exit 1, notFoundBlock을 출력한다', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockResolvedValue({
+        data: [],
+        pagination: { page: 1, pageSize: 100, total: 0, totalPages: 1 },
+      }),
+    });
+    const { program, getExitCode, errors } = buildTestProgram(client);
+
+    await program.parseAsync(['agent', 'list', '--project', 'zzzzzzzz'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('찾을 수 없습니다');
+  });
+
+  it('상세 — Task가 있으면 표를, 허용 상태 전이를 함께 출력한다', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockResolvedValue({
+        data: {
+          ...AGENT_A,
+          status: 'running',
+          tasks: [
+            {
+              id: 't-1',
+              agentId: AGENT_A.id,
+              title: 'Task 1',
+              description: '',
+              status: 'ready',
+              createdAt: '2026-09-01T00:00:00.000Z',
+              updatedAt: '2026-09-01T00:00:00.000Z',
+            },
+          ],
+          waitingReason: null,
+          conversationId: null,
+        },
+      }),
+    });
+    const { program, getExitCode, logs } = buildTestProgram(client);
+
+    await program.parseAsync(['agent', 'status', AGENT_A.id], { from: 'user' });
+
+    expect(getExitCode()).toBe(0);
+    const out = logs.join('\n');
+    expect(out).toContain('Task 1');
+    expect(out).toContain('허용 상태 전이');
+  });
+
+  it('상세 — Task가 없고 종료 상태면 "Task: 없음"·"종료된 Agent"를 출력한다', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockResolvedValue({
+        data: {
+          ...AGENT_A,
+          status: 'completed',
+          tasks: [],
+          waitingReason: null,
+          conversationId: null,
+        },
+      }),
+    });
+    const { program, getExitCode, logs } = buildTestProgram(client);
+
+    await program.parseAsync(['agent', 'status', AGENT_A.id], { from: 'user' });
+
+    expect(getExitCode()).toBe(0);
+    const out = logs.join('\n');
+    expect(out).toContain('Task: 없음');
+    expect(out).toContain('종료된 Agent입니다');
+  });
+
+  it('상태 변경 — 캐스케이드가 없으면 필드만, 있으면 캐스케이드 블록을 함께 출력한다', async () => {
+    const before = {
+      ...AGENT_A,
+      status: 'created',
+      tasks: [],
+      waitingReason: null,
+      conversationId: null,
+    };
+    const client = fakeClient({
+      get: vi.fn().mockResolvedValue({ data: before }),
+      patch: vi.fn().mockResolvedValue({ data: { ...AGENT_A, status: 'running' } }),
+    });
+    const { program, getExitCode, logs } = buildTestProgram(client);
+
+    await program.parseAsync(['agent', 'status', AGENT_A.id, '--set', 'running'], {
+      from: 'user',
+    });
+
+    expect(getExitCode()).toBe(0);
+    expect(logs.join('\n')).toContain('created → running');
+  });
+
+  it('상태 변경 — invalid_transition이면 exit 1, 허용된 전이를 함께 출력한다', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockResolvedValue({
+        data: { ...AGENT_A, tasks: [], waitingReason: null, conversationId: null },
+      }),
+      patch: vi.fn().mockRejectedValue(
+        new ApiRequestError(422, ErrorCode.INVALID_TRANSITION, '전이 불가', {
+          allowedTransitions: ['running'],
+        }),
+      ),
+    });
+    const { program, getExitCode, errors } = buildTestProgram(client);
+
+    await program.parseAsync(['agent', 'status', AGENT_A.id, '--set', 'completed'], {
+      from: 'user',
+    });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('허용된 전이: running');
+  });
+
+  it('상태 변경 — parent_not_active면 exit 1, 프로젝트 안내를 출력한다', async () => {
+    const client = fakeClient({
+      get: vi
+        .fn()
+        .mockResolvedValueOnce({
+          data: { ...AGENT_A, tasks: [], waitingReason: null, conversationId: null },
+        })
+        .mockResolvedValueOnce({ data: { ...PROJECT_A, status: 'paused' } }),
+      patch: vi
+        .fn()
+        .mockRejectedValue(new ApiRequestError(422, ErrorCode.PARENT_NOT_ACTIVE, '비활성')),
+    });
+    const { program, getExitCode, errors } = buildTestProgram(client);
+
+    await program.parseAsync(['agent', 'status', AGENT_A.id, '--set', 'running'], {
+      from: 'user',
+    });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('cm project status');
   });
 });
