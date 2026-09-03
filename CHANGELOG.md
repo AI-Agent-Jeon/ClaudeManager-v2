@@ -296,6 +296,32 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   않았고(테스트 전용 보강), 이 과정에서 발견된 실제 버그는 없다. 전체 커버리지는 85.85%→91.6%로
   오히려 상승했다
 
+**웹 UI (Phase 2A — APV-2A-01 동일 오리진 SPA)**
+- `src/frontend/` 신설 — React 19 + Vite 7 + TypeScript, Tailwind CSS 4(`@tailwindcss/vite`).
+  화면 4종만 구현했다(범위 확정): 로그인(`POST /api/auth/login`) · 진행 보드(`GET
+  /api/phases/current`, 7단계·게이트·WIP 위반 표시) · Agent/Task 목록(`GET /api/agents` ·
+  `GET /api/tasks`) · 대화(`GET /api/conversations` · `GET /api/conversations/:id/messages` ·
+  **`POST /api/conversations/:id/messages`** 전송 포함). 승인 처리·WebSocket 실시간·칸반은
+  다음 차수로 미뤘다
+- 기존 백엔드 라우트·서비스·스키마는 한 줄도 바꾸지 않았다 — 프론트가 응답 모양에 맞춘다
+- 토큰은 `localStorage`에 저장하고 `Authorization: Bearer`로 보낸다(`src/frontend/src/api/client.ts`).
+  401 응답을 받으면 토큰을 지우고 로그인 화면으로 돌린다. `fetch` 자체가 실패하면(서버 다운 등)
+  "서버에 연결할 수 없습니다"를 화면에 그대로 보여준다 — 에러를 삼키지 않는다
+- XSS 방어(NEW-07 연장) — 메시지 본문·이름·제목을 전부 JSX 텍스트 자식으로만 렌더한다.
+  `dangerouslySetInnerHTML`을 쓰는 곳이 없다. `<script>` 등 원문이 그대로 와도 문자열로만
+  표시됨을 실제 메시지 전송으로 확인했다
+- `src/backend/plugins/static.ts` 신설 — `@fastify/static`으로 `dist/frontend`(Vite 빌드 산출물)를
+  같은 오리진에서 서빙한다(`app.ts`, API 라우트 등록 이후). `dist/frontend`가 없으면(빌드 전) 정적
+  서빙만 건너뛰고 API는 정상 기동한다 — API 전용 개발 흐름을 막지 않는다
+- `package.json` 스크립트 — `frontend:dev`(Vite dev 서버, `/api`를 127.0.0.1:3000으로 프록시) ·
+  `frontend:build`(`dist/frontend`로 빌드). `typecheck`는 백엔드(NodeNext)와 프론트(Bundler
+  resolution + JSX + DOM lib, `src/frontend/tsconfig.json`)를 순차로 함께 검사하도록 확장했다 —
+  두 설정을 하나로 합치면 NodeNext와 DOM 타입이 충돌한다
+- `biome.json` — `src/frontend/**/*.tsx` 린트 대상에 추가하고, 그 경로에 한해
+  `useNamingConvention`의 함수 명명 규칙에 `PascalCase`를 허용하는 `overrides`를 추가했다(React
+  컴포넌트는 대문자로 시작해야 JSX가 커스텀 컴포넌트로 인식한다 — 소문자로 강제하면 `<div>`류
+  네이티브 태그로 오인되어 런타임에 깨진다)
+
 ### Changed
 
 - **`GATE_REQUIRED_SKILLS`를 단일 원본으로 승격** — `phase.service.ts`의 모듈 지역 상수였던 것을

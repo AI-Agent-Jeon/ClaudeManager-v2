@@ -3,6 +3,7 @@ import { ErrorCode } from '../shared/constants.js';
 import { type AppConfig, loadConfig } from './config.js';
 import { registerAuth } from './plugins/auth.js';
 import { registerDatabase } from './plugins/database.js';
+import { registerStatic } from './plugins/static.js';
 import { registerAgentRoutes } from './routes/agents.routes.js';
 import { registerApprovalRoutes } from './routes/approvals.routes.js';
 import { registerArtifactRoutes } from './routes/artifacts.routes.js';
@@ -68,6 +69,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerPhaseRoutes(app);
   registerStageRoutes(app);
   registerArtifactRoutes(app);
+
+  // Phase 2A — 빌드된 웹 UI 정적 서빙 (동일 오리진, APV-2A-01). API 라우트
+  // 등록 뒤에 둔다 — find-my-way가 정적 경로(/api/*)를 와일드카드보다
+  // 우선 매칭하므로 순서 자체는 무해하지만, "API가 먼저"라는 가독성을 둔다.
+  await registerStatic(app);
 
   // 에러 응답은 4필드 고정이다 (DES-009 §HTTP 에러 응답 형식)
   app.setErrorHandler((err, request, reply) => {

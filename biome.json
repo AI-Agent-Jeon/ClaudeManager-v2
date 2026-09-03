@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["src/**/*.ts", "tests/**/*.ts", "*.ts", "*.json"]
+    "includes": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "*.ts", "*.json"]
   },
   "formatter": {
     "enabled": true,
@@ -61,5 +61,38 @@
       "trailingCommas": "all",
       "arrowParentheses": "always"
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["src/frontend/**/*.tsx"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useNamingConvention": {
+              "level": "warn",
+              "options": {
+                "strictCase": false,
+                "requireAscii": false,
+                "conventions": [
+                  { "selector": { "kind": "typeLike" }, "formats": ["PascalCase"] },
+                  {
+                    "selector": { "kind": "function" },
+                    "formats": ["camelCase", "PascalCase"]
+                  },
+                  {
+                    "selector": { "kind": "objectLiteralProperty" },
+                    "formats": ["camelCase", "CONSTANT_CASE", "snake_case"]
+                  },
+                  {
+                    "selector": { "kind": "typeProperty" },
+                    "formats": ["camelCase", "snake_case", "PascalCase"]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
