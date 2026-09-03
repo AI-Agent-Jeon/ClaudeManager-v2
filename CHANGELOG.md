@@ -321,6 +321,21 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   `approvals.artifacts`의 코드가 `artifacts` 테이블에 없으면 조회 실패로 승인 상세 전체가 깨지지 않도록
   `syncStatus='missing'` 표시값으로 채운다(`request()`·`resolve()`·`autoAdvance()`·`getById()`·`findGateApproval()`
   전 경로에 적용, 회귀 테스트로 스텁이 사라졌는지·존재하지 않는 코드가 섞여도 안전한지 고정)
+- **R2-01 — `ProjectService.updateStatus()` 사장(死藏) 공개 API 삭제**(2차 리뷰 보통 3건 중 1건,
+  대표 결정). D-1 이후 `updateStatus()`는 `updateStatusSync()`만 감싸 캐스케이드(`AgentService
+  .cascadeFromProjectSync()`)를 건너뛰는데, 실제 캐스케이드가 필요한 유일한 경로(`PATCH
+  /api/projects/:id/status`)는 `projects.routes.ts`가 `updateStatusSync()`를 직접 조율해 이 래퍼를
+  거치지 않는다 — `src/`·`tests/` 전체를 grep해 호출자 0건을 확인했다. "정식 이름"의 메서드가 조용히
+  부수효과를 빠뜨리는 FIND-01·FIND-06과 같은 함정 구조라 미래의 오용을 막기 위해 삭제했다.
+  `project.service.test.ts`의 4개 테스트(캐스케이드 분리 검증 포함)는 삭제 없이 동기 코어
+  `updateStatusSync()`를 직접 호출하도록 옮겼다 — 검증 내용은 그대로다. 유사 패턴을 훑어본 결과
+  (수정하지 않고 보고만): `AgentService.delete()`(동기 코어 `deleteSync()`를 감싸는 얇은 래퍼, R-04
+  트랜잭션 조율 경로는 `agents.routes.ts`가 `closeByRequesterSync()`+`deleteSync()`를 직접 호출해 이
+  래퍼를 거치지 않는다)·`ApprovalService.closeByRequester()`(같은 모양, `closeByRequesterSync()`
+  래퍼)·`ConversationService.createForAgent()`(`createForAgentSync()` 래퍼)도 프로덕션 코드 호출자가
+  0건이고 단위 테스트에서만 직접 호출된다 — 다만 셋 다 `updateStatus()`와 달리 반환값이 실제로 수행한
+  일을 정직하게 반영한다(예: `delete()`의 `closedApprovalCount`는 실제로 0건 마감했다는 뜻으로,
+  캐스케이드가 있었던 척 감추지 않는다). 코드 삭제는 하지 않았다
 
 ### Fixed
 

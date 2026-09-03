@@ -126,11 +126,18 @@ describe('ProjectService.getById — FR-005', () => {
   });
 });
 
-describe('ProjectService.updateStatus — FR-006', () => {
+// R2-01 (2026-09-03, 대표 결정) — 공개 API `async updateStatus()`는 삭제했다.
+// D-1 이후 캐스케이드가 필요한 유일한 실사용 경로(`PATCH /api/projects/:id/status`)는
+// `projects.routes.ts`가 `updateStatusSync()`를 직접 조율하므로, 이 래퍼는
+// 호출하면 캐스케이드를 건너뛰는 함정(FIND-01·FIND-06과 같은 패턴)이었고
+// `src/`·`tests/` 전체에 호출자가 0건이었다. 이 describe 블록은 동기 코어
+// `updateStatusSync()`를 직접 호출하도록 옮겨, 삭제된 래퍼가 하던 것과 같은
+// 동작(Project 자신의 전이 검증·이력 기록)을 계속 검증한다.
+describe('ProjectService.updateStatusSync — FR-006', () => {
   it('Given 프로젝트가 ready 상태일 때 When running으로 변경하면 Then 상태가 갱신되고 이력이 기록된다', async () => {
     const created = await service.create({ name: '전이테스트' });
 
-    const updated = await service.updateStatus(created.id, 'running');
+    const updated = service.updateStatusSync(created.id, 'running', new Date().toISOString());
 
     expect(updated.status).toBe('running');
 
@@ -143,9 +150,11 @@ describe('ProjectService.updateStatus — FR-006', () => {
   it('Given 허용되지 않은 상태 전환일 때 When 상태 변경을 요청하면 Then 422 에러와 허용 전환 목록이 반환된다', async () => {
     const created = await service.create({ name: '불허전이' });
 
-    await expect(service.updateStatus(created.id, 'completed')).rejects.toThrow(AppError);
+    const attempt = () =>
+      service.updateStatusSync(created.id, 'completed', new Date().toISOString());
+    expect(attempt).toThrow(AppError);
     try {
-      await service.updateStatus(created.id, 'completed');
+      attempt();
     } catch (e) {
       expect((e as AppError).statusCode).toBe(422);
       expect((e as AppError).code).toBe('INVALID_TRANSITION');
@@ -154,9 +163,11 @@ describe('ProjectService.updateStatus — FR-006', () => {
   });
 
   it('Given 존재하지 않는 프로젝트 When 상태 변경하면 Then 404 PROJECT_NOT_FOUND', async () => {
-    await expect(service.updateStatus(crypto.randomUUID(), 'running')).rejects.toThrow(AppError);
+    const attempt = () =>
+      service.updateStatusSync(crypto.randomUUID(), 'running', new Date().toISOString());
+    expect(attempt).toThrow(AppError);
     try {
-      await service.updateStatus(crypto.randomUUID(), 'running');
+      attempt();
     } catch (e) {
       expect((e as AppError).code).toBe('PROJECT_NOT_FOUND');
     }
@@ -164,18 +175,18 @@ describe('ProjectService.updateStatus — FR-006', () => {
 
   // Project → Agent → Task 캐스케이드는 더 이상 ProjectService가 소유하지 않는다
   // (FIND-01 수정 · REV-M-01 — DES-001 v3.3 §레이어 규칙 10 "상태 전이·검증이
-  // 붙은 쓰기는 Repository 직접 접근 예외 대상이 아니다"). `updateStatus`/
-  // `updateStatusSync`는 이제 Project 자신의 전이만 처리한다 — 캐스케이드는
-  // `projects.routes.ts`가 `db.transaction()` 안에서 `AgentService
-  // .cascadeFromProjectSync()`와 조율한다(DES-001 §레이어 규칙 9). 캐스케이드
-  // 회귀·롤백·상태 머신 가드·감사 로그 테스트는
-  // `tests/unit/backend/routes/project-cascade.test.ts`로 옮겼다.
+  // 붙은 쓰기는 Repository 직접 접근 예외 대상이 아니다"). `updateStatusSync`는
+  // Project 자신의 전이만 처리한다 — 캐스케이드는 `projects.routes.ts`가
+  // `db.transaction()` 안에서 `AgentService.cascadeFromProjectSync()`와
+  // 조율한다(DES-001 §레이어 규칙 9). 캐스케이드 회귀·롤백·상태 머신 가드·
+  // 감사 로그 테스트는 `tests/unit/backend/routes/project-cascade.test.ts`로
+  // 옮겼다.
   it('Given Project가 running Agent를 가질 때 When cancelled로 전이해도 Then ProjectService 단독 호출은 Agent를 건드리지 않는다 (캐스케이드는 Route 소관)', async () => {
     const created = await service.create({ name: '캐스케이드-분리' });
-    await service.updateStatus(created.id, 'running');
+    service.updateStatusSync(created.id, 'running', new Date().toISOString());
     const runningAgentId = seedAgent(testDb.db, created.id, { status: 'running' });
 
-    await service.updateStatus(created.id, 'cancelled');
+    service.updateStatusSync(created.id, 'cancelled', new Date().toISOString());
 
     expect(agentRepo.findById(runningAgentId)?.status).toBe('running');
   });

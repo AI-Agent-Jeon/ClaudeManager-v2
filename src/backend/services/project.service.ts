@@ -152,6 +152,13 @@ export class ProjectService {
    * 붙으면 내부에 실제 `await`가 없어도 항상 Promise로 감싸여, 콜백이
    * 반환값을 동기적으로 꺼낼 수 없다(DES-001 §Repository 직접 접근 예외 (a)
    * 원자성 근거와 같은 이유 · R-04·Layer 2-6과 같은 패턴).
+   *
+   * R2-01 (2026-09-03) — 이 메서드를 감싸던 공개 API `async updateStatus()`는
+   * 삭제했다. D-1 이후 캐스케이드는 `projects.routes.ts`가 이 동기 코어를
+   * 직접 조율해서 처리하므로, 그 래퍼는 호출하면 캐스케이드를 건너뛰는
+   * 함정(FIND-01·FIND-06과 같은 패턴)이었고 `src/`·`tests/` 전체에 호출자가
+   * 0건이었다(대표 결정 — 삭제). 캐스케이드가 필요 없는 단독 호출도 이
+   * 동기 코어를 직접 쓴다.
    */
   updateStatusSync(id: string, newStatus: ProjectStatus, now: string): Project {
     const row = this.projectRepo.findById(id);
@@ -185,16 +192,5 @@ export class ProjectService {
     });
 
     return toProject(updated);
-  }
-
-  /**
-   * FR-006 — 공개 API. 캐스케이드 조율이 필요 없는 단독 호출에 쓰는 얇은
-   * 래퍼다(`agents.routes.ts`의 `AgentService.delete()`가 `deleteSync()`를
-   * 감싸는 것과 같은 모양). `PATCH /api/projects/:id/status`는 캐스케이드가
-   * 필요하므로 이 메서드가 아니라 `updateStatusSync()`를 Route에서 직접
-   * 호출한다(DES-001 §레이어 규칙 9).
-   */
-  async updateStatus(id: string, newStatus: ProjectStatus): Promise<Project> {
-    return this.updateStatusSync(id, newStatus, new Date().toISOString());
   }
 }
