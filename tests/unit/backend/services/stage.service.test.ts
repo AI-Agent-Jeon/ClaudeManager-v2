@@ -13,6 +13,7 @@ import { ApprovalService } from '../../../../src/backend/services/approval.servi
 import { ConversationService } from '../../../../src/backend/services/conversation.service.js';
 import { PhaseService } from '../../../../src/backend/services/phase.service.js';
 import { StageService } from '../../../../src/backend/services/stage.service.js';
+import { TaskService } from '../../../../src/backend/services/task.service.js';
 import { AppError } from '../../../../src/backend/utils/errors.js';
 import { WebSocketHub } from '../../../../src/backend/ws/hub.js';
 import {
@@ -54,7 +55,7 @@ beforeEach(() => {
     agentRepo,
     statusChangeRepo,
     new ProjectRepository(testDb.db),
-    new TaskRepository(testDb.db),
+    new TaskService(new TaskRepository(testDb.db), statusChangeRepo, agentRepo),
     conversationService,
     conversationRepo,
   );

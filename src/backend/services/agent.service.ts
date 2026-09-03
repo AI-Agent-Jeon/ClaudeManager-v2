@@ -4,7 +4,6 @@ import {
   EntityType,
   ErrorCode,
   ProjectStatus,
-  TaskStatus,
   type WaitingReason,
 } from '../../shared/constants.js';
 import type {
@@ -22,10 +21,10 @@ import type {
 import type { ConversationRepository } from '../repositories/conversation.repository.js';
 import type { ProjectRepository } from '../repositories/project.repository.js';
 import type { StatusChangeRepository } from '../repositories/status-change.repository.js';
-import type { TaskRepository, TaskRow } from '../repositories/task.repository.js';
 import { AppError } from '../utils/errors.js';
 import { getAllowedTransitions, validateTransition } from '../utils/state-machine.js';
 import type { ConversationService } from './conversation.service.js';
+import type { TaskService } from './task.service.js';
 
 /**
  * AgentService (FR-007)
@@ -34,11 +33,14 @@ import type { ConversationService } from './conversation.service.js';
  * 상태 머신: DES-007 v2.1 §3·§8
  *
  * 레이어 규칙(src/CLAUDE.md §레이어 규칙): Service는 자신의 Repository를 직접
- * 호출하고, 다른 애그리거트와의 연동은 "허용된 Service 간 의존 4건"
- * (Stage → Approval → Agent → Conversation)을 따른다 — 그래서 여기서
- * ConversationService를 호출한다. Task 캐스케이드는 TaskService가 아니라
- * TaskRepository를 직접 쓴다(ProjectService가 StatusChangeRepository를 직접
- * 쓰는 것과 같은 원칙 — Service→Service 의존을 허용 목록 밖으로 늘리지 않는다).
+ * 호출하고, 다른 애그리거트와의 연동은 "허용된 Service 간 의존"(v2 · R2-02 ·
+ * 대표 결정 b안으로 4건 → 5건: Stage → Approval → Agent → {Conversation, Task})
+ * 을 따른다 — 그래서 여기서 ConversationService·TaskService를 호출한다.
+ * Task 캐스케이드 쓰기(상태 전이·검증)는 `TaskService.cascadeStatusSync()`가
+ * 소유한다 — 이전에는 `AgentService`가 `TaskRepository.updateStatus()`를
+ * 직접 불러 DES-001 §레이어 규칙 10 "상태 전이·검증이 붙은 쓰기는 Repository
+ * 직접 접근 예외 대상이 아니다"를 위반했다(REV2-02). `TaskService`는
+ * `AgentService`를 부르지 않는다 — 위상 정렬 무순환을 유지한다.
  */
 
 export interface CreateAgentInput {
@@ -74,18 +76,6 @@ function toAgent(row: AgentRow): Agent {
   };
 }
 
-function toTaskSummary(row: TaskRow) {
-  return {
-    id: row.id,
-    agentId: row.agent_id,
-    title: row.title,
-    description: row.description,
-    status: row.status as TaskStatus,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
 export class AgentService {
   constructor(
     /** 트랜잭션 경계 전용. 쿼리는 Repository가 한다 (DES-004 §7) */
@@ -93,7 +83,7 @@ export class AgentService {
     private readonly agentRepo: AgentRepository,
     private readonly statusChangeRepo: StatusChangeRepository,
     private readonly projectRepo: ProjectRepository,
-    private readonly taskRepo: TaskRepository,
+    private readonly taskService: TaskService,
     private readonly conversationService: ConversationService,
     private readonly conversationRepo: ConversationRepository,
   ) {}
@@ -179,12 +169,19 @@ export class AgentService {
       throw new AppError(404, ErrorCode.AGENT_NOT_FOUND, `Agent를 찾을 수 없습니다: ${id}`);
     }
 
-    const taskRows = this.taskRepo.findMany({ agentId: id, offset: 0, limit: AGENT_TASKS_LIMIT });
+    // R2-02 — TaskRepository 대신 TaskService를 거친다. `toTask()`(task.service.ts)
+    // 의 필드 구성은 이전 `toTaskSummary`와 동일하다(id·agentId·title·description·
+    // status·createdAt·updatedAt) — 동작이 바뀌지 않는다.
+    const { items: tasks } = await this.taskService.list({
+      page: 1,
+      pageSize: AGENT_TASKS_LIMIT,
+      agentId: id,
+    });
     const conversation = this.conversationRepo.findByEntityId(id);
 
     return {
       ...toAgent(row),
-      tasks: taskRows.map(toTaskSummary),
+      tasks,
       // status가 waiting일 때만 값을 가진다 (D-11)
       waitingReason:
         row.status === AgentStatus.WAITING ? (row.waiting_reason as WaitingReason | null) : null,
@@ -246,8 +243,9 @@ export class AgentService {
     });
 
     // 캐스케이드: Agent → cancelled/paused ⇒ 소속 활성 Task 일괄 전이 (DES-007 v2 §8)
+    // R2-02 — 쓰기는 TaskService가 소유한다(cascadeStatusSync).
     if (newStatus === AgentStatus.CANCELLED || newStatus === AgentStatus.PAUSED) {
-      this.cascadeToTasks(id, newStatus, now);
+      this.taskService.cascadeStatusSync(id, newStatus, now);
     }
 
     // 채널 전이: Agent 종료(completed/cancelled) ⇒ CH-AGENT readonly (DES-007 v2 §8)
@@ -342,9 +340,11 @@ export class AgentService {
    * (`agentRepo.findActiveByProjectId`)는 AgentService 자신의 Repository이므로
    * 크로스 애그리거트 문제가 없다.
    *
-   * Task로의 전파는 새로 만들지 않고 기존 `cascadeToTasks()`를 그대로
-   * 재사용한다(중첩 캐스케이드) — DES-004 §6 "각 Agent 캐스케이드는 다시
-   * 해당 Agent의 Task로 전파".
+   * Task로의 전파는 `TaskService.cascadeStatusSync()`(중첩 캐스케이드)가
+   * 맡는다 — DES-004 §6 "각 Agent 캐스케이드는 다시 해당 Agent의 Task로 전파".
+   * R2-02 이전에는 이 Service의 private `cascadeToTasks()`가 같은 일을
+   * `taskRepo.updateStatus()` 직접 호출로 했다 — 소유 Service로 옮겼을 뿐
+   * 동작은 동일하다.
    *
    * `async`가 아니다 — better-sqlite3의 `db.transaction()`은 동기 콜백만
    * 지원한다. 여기 `await`를 쓰면 컴파일이 실패해 "트랜잭션 콜백 안에서
@@ -383,35 +383,14 @@ export class AgentService {
         changedAt: now,
       });
 
-      // 중첩 캐스케이드: Agent → Task (DES-004 §6, 기존 cascadeToTasks 재사용)
-      this.cascadeToTasks(agent.id, targetStatus, now);
+      // 중첩 캐스케이드: Agent → Task (DES-004 §6, TaskService.cascadeStatusSync 소유)
+      this.taskService.cascadeStatusSync(agent.id, targetStatus, now);
 
       // 채널 전이: cancelled만 종료다 (DES-007 v2 §8). paused는 재개 가능한
       // 상태라 readonly로 만들지 않는다 (FIND-06 수정).
       if (targetStatus === AgentStatus.CANCELLED) {
         this.conversationService.markReadonlySync(agent.id);
       }
-    }
-  }
-
-  private cascadeToTasks(agentId: string, agentNewStatus: AgentStatus, now: string): void {
-    const targetStatus =
-      agentNewStatus === AgentStatus.CANCELLED ? TaskStatus.CANCELLED : TaskStatus.PAUSED;
-    const candidates = this.taskRepo.findActiveByAgentId(agentId);
-
-    for (const task of candidates) {
-      // 상태 머신이 허용하지 않는 전이는 건너뛴다(예: in_review는 cancelled로 갈 수 없다)
-      if (!validateTransition('task', task.status, targetStatus)) continue;
-
-      this.taskRepo.updateStatus(task.id, targetStatus, now);
-      this.statusChangeRepo.insert({
-        entityType: EntityType.TASK,
-        entityId: task.id,
-        fromStatus: task.status,
-        toStatus: targetStatus,
-        changedBy: 'system',
-        changedAt: now,
-      });
     }
   }
 }

@@ -18,6 +18,7 @@ import { createApprovalBodySchema, resolveApprovalBodySchema } from '../schemas/
 import { AgentService } from '../services/agent.service.js';
 import { ApprovalService } from '../services/approval.service.js';
 import { ConversationService } from '../services/conversation.service.js';
+import { TaskService } from '../services/task.service.js';
 
 /**
  * 승인 라우트 — FR-028 · FR-030 (R-07)
@@ -55,13 +56,14 @@ export function buildApprovalService(app: FastifyInstance): ApprovalService {
   const conversationRepo = new ConversationRepository(app.db);
   const messageRepo = new MessageRepository(app.db);
   const conversationService = new ConversationService(conversationRepo, messageRepo);
-  // AgentService → ConversationService는 "허용된 Service 간 의존 4건"이다
+  // AgentService → ConversationService·TaskService는 "허용된 Service 간
+  // 의존"이다(R2-02 · 대표 결정 b안으로 4건 → 5건).
   const agentService = new AgentService(
     app.db,
     agentRepo,
     new StatusChangeRepository(app.db),
     new ProjectRepository(app.db),
-    new TaskRepository(app.db),
+    new TaskService(new TaskRepository(app.db), new StatusChangeRepository(app.db), agentRepo),
     conversationService,
     conversationRepo,
   );

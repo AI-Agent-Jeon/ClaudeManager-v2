@@ -14,6 +14,7 @@ import { TaskRepository } from '../../../../src/backend/repositories/task.reposi
 import { AgentService } from '../../../../src/backend/services/agent.service.js';
 import { ApprovalService } from '../../../../src/backend/services/approval.service.js';
 import { ConversationService } from '../../../../src/backend/services/conversation.service.js';
+import { TaskService } from '../../../../src/backend/services/task.service.js';
 import { WebSocketHub } from '../../../../src/backend/ws/hub.js';
 import type { ApprovalSummary } from '../../../../src/shared/types.js';
 import {
@@ -52,7 +53,7 @@ function buildApprovalService(db: TestDb['db']): ApprovalService {
     agentRepo,
     statusChangeRepo,
     new ProjectRepository(db),
-    new TaskRepository(db),
+    new TaskService(new TaskRepository(db), statusChangeRepo, agentRepo),
     conversationService,
     conversationRepo,
   );

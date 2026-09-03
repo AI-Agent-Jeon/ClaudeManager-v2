@@ -12,6 +12,7 @@ import { AgentService } from '../../../../src/backend/services/agent.service.js'
 import { ApprovalService } from '../../../../src/backend/services/approval.service.js';
 import { ConversationService } from '../../../../src/backend/services/conversation.service.js';
 import { StageService } from '../../../../src/backend/services/stage.service.js';
+import { TaskService } from '../../../../src/backend/services/task.service.js';
 import { WebSocketHub } from '../../../../src/backend/ws/hub.js';
 import {
   createTestDb,
@@ -50,7 +51,7 @@ beforeEach(() => {
     agentRepo,
     statusChangeRepo,
     new ProjectRepository(testDb.db),
-    new TaskRepository(testDb.db),
+    new TaskService(new TaskRepository(testDb.db), statusChangeRepo, agentRepo),
     conversationService,
     conversationRepo,
   );

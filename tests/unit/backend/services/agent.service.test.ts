@@ -7,6 +7,7 @@ import { StatusChangeRepository } from '../../../../src/backend/repositories/sta
 import { TaskRepository } from '../../../../src/backend/repositories/task.repository.js';
 import { AgentService } from '../../../../src/backend/services/agent.service.js';
 import { ConversationService } from '../../../../src/backend/services/conversation.service.js';
+import { TaskService } from '../../../../src/backend/services/task.service.js';
 import { AppError } from '../../../../src/backend/utils/errors.js';
 import { createTestDb, seedAgent, seedProject, type TestDb } from '../../../fixtures/test-db.js';
 
@@ -36,12 +37,13 @@ beforeEach(() => {
     conversationRepo,
     new MessageRepository(testDb.db),
   );
+  const taskService = new TaskService(taskRepo, statusChangeRepo, agentRepo);
   service = new AgentService(
     testDb.db,
     agentRepo,
     statusChangeRepo,
     projectRepo,
-    taskRepo,
+    taskService,
     conversationService,
     conversationRepo,
   );

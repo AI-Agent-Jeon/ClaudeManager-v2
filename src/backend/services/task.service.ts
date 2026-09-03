@@ -15,6 +15,16 @@ import { getAllowedTransitions, validateTransition } from '../utils/state-machin
  * 레이어 규칙(src/CLAUDE.md §레이어 규칙): Service는 Repository만 호출한다.
  * PARENT_NOT_ACTIVE 가드는 AgentService를 부르지 않고 AgentRepository를
  * 직접 조회한다 — Task→Agent는 "허용된 Service 간 의존 4건"에 없다.
+ *
+ * R2-02 (2026-09-03, 대표 결정 b안) — `cascadeStatusSync()`가 Agent →
+ * Task 상태 캐스케이드를 소유한다. 이전에는 `AgentService.cascadeToTasks()`가
+ * `taskRepo.updateStatus()`로 Task 애그리거트에 직접 썼다 — DES-001 §레이어
+ * 규칙 10 "상태 전이·검증이 붙은 쓰기는 Repository 직접 접근 예외 대상이
+ * 아니다" 위반이었다. `AgentService`가 이제 `TaskRepository` 대신
+ * `TaskService`를 주입받아 이 메서드를 호출한다 — "허용된 Service 간 의존"이
+ * 4건에서 5건(`Agent → Task` 추가)으로 늘었다(대표 승인). `TaskService`는
+ * `AgentService`를 부르지 않는다 — 위상 정렬 무순환(`Stage → Approval →
+ * Agent → {Conversation, Task}`)을 유지한다.
  */
 
 export interface CreateTaskInput {
@@ -162,5 +172,45 @@ export class TaskService {
     });
 
     return toTask(updated);
+  }
+
+  /**
+   * 동기 코어 — Agent → Task 상태 캐스케이드 (R2-02 · DES-004 §6 · DES-007 v2 §8).
+   * `AgentService`가 자신의 cancelled/paused 전이 직후(`updateStatus()`) 또는
+   * Project 캐스케이드의 중첩 호출(`cascadeFromProjectSync()`)로 호출한다.
+   *
+   * 동작은 이전 `AgentService.cascadeToTasks()`(private)와 완전히 동일하다 —
+   * 후보는 `taskRepo.findActiveByAgentId`(in_progress·ready)로 조회하고,
+   * 상태 머신이 허용하지 않는 전이는 건너뛰며, `changedBy: 'system'`으로
+   * 이력을 남긴다. 옮기면서 로직을 바꾸지 않았다.
+   *
+   * `async`가 아니다 — `markReadonlySync`·`cascadeFromProjectSync`와 같은
+   * 패턴이다. `AgentService.cascadeFromProjectSync()`는 `db.transaction()`의
+   * 동기 콜백 안에서 호출되므로, 여기 `await`를 쓰면 컴파일이 실패해
+   * "트랜잭션 콜백 안에서 안전하다"는 전제를 타입 체커가 강제한다.
+   */
+  cascadeStatusSync(
+    agentId: string,
+    agentNewStatus: typeof AgentStatus.CANCELLED | typeof AgentStatus.PAUSED,
+    now: string,
+  ): void {
+    const targetStatus =
+      agentNewStatus === AgentStatus.CANCELLED ? TaskStatus.CANCELLED : TaskStatus.PAUSED;
+    const candidates = this.taskRepo.findActiveByAgentId(agentId);
+
+    for (const task of candidates) {
+      // 상태 머신이 허용하지 않는 전이는 건너뛴다(예: in_review는 cancelled로 갈 수 없다)
+      if (!validateTransition('task', task.status, targetStatus)) continue;
+
+      this.taskRepo.updateStatus(task.id, targetStatus, now);
+      this.statusChangeRepo.insert({
+        entityType: EntityType.TASK,
+        entityId: task.id,
+        fromStatus: task.status,
+        toStatus: targetStatus,
+        changedBy: 'system',
+        changedAt: now,
+      });
+    }
   }
 }

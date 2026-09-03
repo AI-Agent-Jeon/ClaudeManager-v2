@@ -18,6 +18,7 @@ import { paginationQuery } from '../schemas/common.schema.js';
 import { AgentService } from '../services/agent.service.js';
 import { ApprovalService } from '../services/approval.service.js';
 import { ConversationService } from '../services/conversation.service.js';
+import { TaskService } from '../services/task.service.js';
 
 /**
  * Agent 라우트 — FR-007
@@ -50,15 +51,17 @@ export function registerAgentRoutes(app: FastifyInstance): void {
   const messageRepo = new MessageRepository(app.db);
   const statusChangeRepo = new StatusChangeRepository(app.db);
 
-  // AgentService → ConversationService는 "허용된 Service 간 의존 4건"이다
-  // (src/CLAUDE.md §레이어 규칙: Stage → Approval → Agent → Conversation).
+  // AgentService → ConversationService·TaskService는 "허용된 Service 간
+  // 의존"이다 (src/CLAUDE.md §레이어 규칙: Stage → Approval → Agent →
+  // {Conversation, Task} — R2-02 · 대표 결정 b안으로 4건 → 5건).
   const conversationService = new ConversationService(conversationRepo, messageRepo);
+  const taskService = new TaskService(new TaskRepository(app.db), statusChangeRepo, agentRepo);
   const service = new AgentService(
     app.db,
     agentRepo,
     statusChangeRepo,
     new ProjectRepository(app.db),
-    new TaskRepository(app.db),
+    taskService,
     conversationService,
     conversationRepo,
   );

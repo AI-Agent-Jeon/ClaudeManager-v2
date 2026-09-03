@@ -11,6 +11,7 @@ import { paginationQuery } from '../schemas/common.schema.js';
 import { AgentService } from '../services/agent.service.js';
 import { ConversationService } from '../services/conversation.service.js';
 import { ProjectService } from '../services/project.service.js';
+import { TaskService } from '../services/task.service.js';
 
 /**
  * Project 라우트 — FR-003 ~ FR-006
@@ -47,18 +48,20 @@ export function registerProjectRoutes(app: FastifyInstance): void {
   // FIND-01 캐스케이드(B안) — PATCH .../status 핸들러가 db.transaction() 안에서
   // ProjectService.updateStatusSync() 다음에 이 인스턴스의
   // cascadeFromProjectSync()를 호출한다(DES-001 §레이어 규칙 9 · R-04와 같은
-  // 패턴). AgentService → ConversationService는 "허용된 Service 간 의존 4건"이다.
+  // 패턴). AgentService → ConversationService·TaskService는 "허용된 Service
+  // 간 의존"이다(R2-02 · 대표 결정 b안으로 4건 → 5건).
   const conversationRepo = new ConversationRepository(app.db);
   const conversationService = new ConversationService(
     conversationRepo,
     new MessageRepository(app.db),
   );
+  const taskService = new TaskService(new TaskRepository(app.db), statusChangeRepo, agentRepo);
   const agentService = new AgentService(
     app.db,
     agentRepo,
     statusChangeRepo,
     projectRepo,
-    new TaskRepository(app.db),
+    taskService,
     conversationService,
     conversationRepo,
   );

@@ -427,6 +427,17 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   running)" 문구를 출력해, 실제로는 재개될 Agent가 없는 경우까지 오도했다. `runDecide`가 반려가 아닌
   응답에 한해 `GET /agents/:id`로 요청자가 실재 Agent인지 확인(`requesterIsAgent`)하고, `presentDecide`는
   그 결과가 참일 때만 문구를 출력하도록 교정했다(요청자가 Agent가 아니면 문구 자체를 생략한다)
+- **R2-02 — `AgentService.cascadeToTasks()`가 `TaskRepository`에 상태 전이를 직접 쓰던 문제**
+  (2차 리뷰 보통 3건 중 1건, 대표 결정 b안). DES-001 §레이어 규칙 10 "상태 전이·검증이 붙은 쓰기는
+  Repository 직접 접근 예외 대상이 아니다" 위반이었다 — FIND-01·FIND-06과 같은 패턴이 Task 계층에서
+  재현될 수 있는 구조였다(`TaskService.updateStatus()`에 부수효과가 하나 붙는 순간 캐스케이드가
+  그 가드를 우회한다). `TaskService`에 동기 코어 `cascadeStatusSync()`를 신설해 상태 전이 쓰기를
+  소유 Service로 옮기고, `AgentService`는 `TaskRepository` 대신 `TaskService`를 주입받는다 —
+  "허용된 Service 간 의존"이 4건에서 5건(`Agent → Task` 추가)으로 늘었다(대표 승인). `TaskService`는
+  `AgentService`를 부르지 않아 위상 정렬 무순환(`Stage → Approval → Agent → {Conversation, Task}`)을
+  유지한다. `AgentService.getById()`의 Task 목록 조회도 `TaskService.list()` 경유로 바꿔 `taskRepo`
+  의존을 완전히 제거했다. 동작은 이전과 동일 — `tests/unit/backend/routes/project-cascade.test.ts`
+  전건이 수정 없이 통과한다
 
 ### Security
 
