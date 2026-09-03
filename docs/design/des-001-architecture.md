@@ -1,8 +1,8 @@
 # DES-001 아키텍처 설계서
 
 > Phase 1: 기반 구축
-> 버전: **v3.2 (2026-09-02)** — 교차 검증 반영. Phase 1 컴포넌트 18 → 36종 + ADR-012
-> **원본**: [Notion DES-001](https://app.notion.com/p/3c5d066504ec81b78014c7ccd8cb0723) · Git 동기화 2026-09-01
+> 버전: **v3.5 (2026-09-03)** — 허용된 Service 간 의존 4건 → **5건**(`AgentService → TaskService` 추가, R2-02). 컴포넌트 수 변경 없음
+> **원본**: [Notion DES-001](https://app.notion.com/p/3c5d066504ec81b78014c7ccd8cb0723) · Git 동기화 2026-09-03
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
 > **✅ 개정 완료 (2026-09-01)**
@@ -374,11 +374,46 @@ Bootstrap  →  Services                 (동일 — 시드가 비즈니스 규�
 8. **WebSocket Hub는 출력 전용** (v3) — Hub가 Service를 호출하지 않는다. 호출하면 순환이 생긴다
 9. **교차 애그리거트 트랜잭션은 Route가 조율한다** (v3.2) — 두 Service를 한 트랜잭션에 묶어야 하는데 **그 방향이 순환을 만든다면**, Service끼리 부르지 말고 Route 핸들러가 `db.transaction()` 안에서 순서대로 호출한다. better-sqlite3는 동기식이라 가능하다.
    - 적용 사례: `DELETE /api/agents/:id` → `approvalService.closeByRequester()` + `agentService.delete()` (R-04). `AgentService → ApprovalService`를 추가하면 규칙 앞의 `ApprovalService → AgentService`와 **양방향 순환**이 된다
+   - **적용 사례 (v3.4)**: `PATCH /api/projects/:id/status`(취소·일시정지) → `projectService.updateStatusSync()` + `agentService.cascadeFromProjectSync()` (D-1 B안, FIND-01 해소 · DES-004 §6, 구현 정합 확인: 커밋 `3700f2b`). 캐스케이드를 순환 없이 묶는 문제가 아니라 — 이전 구현이 `ProjectService`가 `AgentRepository`에 **직접** 상태 전이를 써서(레이어 규칙 10 위반, REV-M-01) `AgentService`가 소유한 `cascadeToTasks()`를 건너뛴 사례다. `ProjectService → AgentService` Service 간 의존을 새로 허용 목록에 추가하는 대신(위상 정렬을 어지럽힌다), R-04와 같은 패턴으로 Route가 조율한다
+10. **Repository 직접 접근 예외** (v3.3) — Service가 "허용된 Service 간 의존 5건"(v3.5) 밖의 애그리거트 데이터에 닿아야 할 때, 그 Service를 거치지 않고 **타 애그리거트의 Repository를 직접 주입**받을 수 있다. 두 조건 중 하나를 만족해야 한다: **(a) 원자성** — 여러 애그리거트 쓰기가 하나의 동기 트랜잭션 안에서 이뤄져야 하는 경우, **(b) 읽기 전용 조회·집계** — 다른 애그리거트의 데이터를 읽기만 하는 경우. **상태 전이·검증이 붙은 쓰기는 예외 대상이 아니다** — 그런 쓰기는 반드시 소유 Service를 경유한다. 상세는 §Repository 직접 접근 예외
 
-> **허용된 Service 간 의존 4건** (순환 아님, 단방향)
-> `AgentService → ConversationService` · `ApprovalService → ConversationService` · **`ApprovalService → AgentService`** (v3.2 · R-02) · `StageService → ApprovalService`
+> **허용된 Service 간 의존 5건** (순환 아님, 단방향)
+> `AgentService → ConversationService` · `ApprovalService → ConversationService` · **`ApprovalService → AgentService`** (v3.2 · R-02) · `StageService → ApprovalService` · **`AgentService → TaskService`** (v3.5 · R2-02)
 >
-> 위상 정렬이 성립한다: `StageService → ApprovalService → AgentService → ConversationService`. 역방향 간선은 하나도 없다.
+> 위상 정렬이 성립한다: `StageService → ApprovalService → AgentService → {ConversationService, TaskService}`. 역방향 간선은 하나도 없다 — `TaskService`는 `AgentService`를 참조하지 않는다(grep 확인, 커밋 `8e47972`).
+
+---
+
+## Repository 직접 접근 예외 — v3.3 신규
+
+레이어 규칙 10의 상세다. 개발 중 **같은 성격의 예외가 세 번** 반복해서 나왔다 — "허용된 Service 간 의존"만으로는 풀리지 않는 상황에서, 매번 Service 간 의존을 늘리는 대신 **타 애그리거트의 Repository를 직접 주입받는 방식**으로 해결했다. 여기서 규칙으로 명문화한다.
+
+### 언제 허용되는가
+
+| 조건 | 설명 |
+|------|------|
+| **(a) 원자성** | 여러 애그리거트에 대한 쓰기가 **하나의 SQLite 트랜잭션** 안에서 일어나야 하는데, `async` Service 메서드는 `db.transaction()`의 **동기 콜백** 안에서 반환값을 꺼낼 수 없다 — `async` 키워드가 붙으면 내부에 실제 `await`가 없어도 항상 Promise로 감싸이기 때문이다 |
+| **(b) 읽기 전용 조회·집계** | 다른 애그리거트의 데이터를 **읽기만** 하는 경우. 쓰기가 없으므로 그 애그리거트가 지키는 비즈니스 규칙(상태 전이·검증)을 우회할 위험이 없다 |
+
+### 언제 여전히 금지인가
+
+**상태 전이·검증이 붙은 쓰기**는 이 예외의 대상이 아니다. 그런 쓰기는 반드시 소유 Service를 경유해야 한다 — Repository를 직접 호출해 쓰면 그 애그리거트가 지키는 규칙(상태 머신 가드, CHECK 제약 이전 단계의 검증 등)을 조용히 우회하게 된다. 레이어 규칙 3(Routes는 Service만 호출)·4(Repository는 Drizzle 쿼리만, 비즈니스 로직 금지)가 이미 지키려는 것과 같은 경계다.
+
+### 왜 무순환 보장이 유지되는가
+
+Repository는 다른 Service를 호출하지 않는다(레이어 규칙 4). 그래서 어떤 Service가 타 애그리거트의 Repository를 직접 주입받아도 **Service 간 호출 그래프에는 새 간선이 생기지 않는다** — Repository는 그 그래프의 잎(leaf)이지, 다른 Service로 이어지는 경로가 아니다. 기존 위상 정렬 `StageService → ApprovalService → AgentService → ConversationService`는 그대로 유지된다.
+
+### 실제 사례
+
+| 계층 | 사례 | 근거 | 유형 |
+|------|------|------|:---:|
+| (선례) | `AgentService`가 `ConversationRepository`를 읽기 목적으로 직접 참조 | Agent 상세 조회에 채널 정보가 필요하나 쓰기는 없다. `ConversationService`(생성·상태 전이)와 `ConversationRepository`(읽기)를 함께 주입받는다 | (b) |
+| **Layer 2-6** | `ApprovalService`가 `MessageRepository`·`ConversationRepository` 직접 주입 | MSG-04(요청)/MSG-01(응답)/MSG-05(자동 진행) 기록과 `approvals` 갱신이 **한 트랜잭션**이어야 하는데, `ConversationService.appendSystemMessage`는 `async`라 `db.transaction()`의 동기 콜백 안에서 반환값을 꺼낼 수 없다 | (a) |
+| **Layer 2-7** | `PhaseRepository`가 `artifacts`·`approvals`를 JOIN으로 직접 집계 (`PhaseService`는 `PhaseRepository`만 주입받는다) | `GET /api/phases/current`가 stage별 `artifactCount`·`pendingApprovalCount`·`gate`를 필요로 하나, `Phase→Approval`·`Phase→Artifact` 의존은 허용 목록에 없다. Repository가 한 쿼리(GROUP BY/윈도 함수)로 집계해 N+1도 만들지 않는다 | (b) |
+| **Layer 2-9** | `ApprovalService`가 `ArtifactRepository` 직접 주입 | `ApprovalDetail.artifacts`를 실제 값으로 채우기 위한 읽기 전용 조회. `Approval→Artifact`도 허용 목록에 없다. Layer 2-7의 판단과 같은 원칙이다 | (b) |
+
+> 근거 문구는 각 파일 상단 "── 의존 설계 메모 ──" 주석에서 그대로 가져왔다 — `approval.service.ts`(Layer 2-6·2-9), `phase.repository.ts`(Layer 2-7).
+> **이 표가 없으면 다음 작업자(Layer R·Layer 3)가 같은 딜레마를 처음부터 다시 겪는다.** 판단 기준이 여기 있으니, 새 사례는 (a)/(b) 중 무엇에 해당하는지 먼저 확인한다.
 
 ### Cross-Cutting Concerns
 
@@ -551,3 +586,6 @@ Phase 1의 FR-002는 토큰 기반 인증을 요구한다. 1인 사용자 로컬
 | **v3.0** | 2026-09-01 | **승인 반영 개정.** Component Diagram에 **Routes 4종 · Service 5종 · Repository 6종 · WebSocket Hub · ApprovalTimeoutJob · WebSocket Plugin 추가**(Phase 1 컴포넌트 18 → 35종).<br>**ADR-012 신설 — 타임아웃 잡을 Fastify 프로세스 내부 타이머로 확정**(SQLite 단일 쓰기자 전제와 충돌하는 별도 워커안 기각). DES-002 v2·DES-004 v2가 두 번 걸어둔 미해결 해소.<br>레이어 규칙 2건 추가(Jobs는 Service만 호출 · WS Hub는 출력 전용), 허용된 Service 간 단방향 의존 3건 명시. WebSocket 인증을 Cross-Cutting에 편입. **접속 경계를 Phase 1 루프백 전용으로 확정**(D-19 연기 반영). Graceful Shutdown에 잡 정지·소켓 정리 2단계 추가. 미해결 2건 등록 |
 | **v3.1** | 2026-09-02 | **교차 검증 정정 (내용 변경 없음, 표기 정합).** 컴포넌트 수 오기 정정 — Component 상세 표 실제 행 기준 **18 → 35종**(v3.0 본문의 "17 → 30종"은 집계 오류).<br>**RISK-010 경고 정정** — D-19 터널링이 Phase 2로 연기되어 "localhost only 전제가 깨진다"는 §접속 경계의 확정과 모순이었다. **전제 유효**로 정정.<br>Phase 2+ 확장표 **FR-018 Phase 2 → 1**(D-16 편입 완료) · **FR-015 Phase 4 → 2**(D-23). Must Story 매핑에 **FR-005 누락 보완** |
 | **v3.2** | 2026-09-02 | **교차 검증 반영 (승인 R-01·R-02).** 컴포넌트 35 → **36종**.<br>**`BootstrapService` 신설** — 서버 `ready` 훅에서 CH-MAIN·Phase 1·7단계를 멱등 시드. PLN-001 FR-026 수용 기준과 DES-007 §7을 실행할 주체가 없어 **빈 DB에서 `cm chat main`·`cm progress`·`cm stage start`가 전부 실패하는 상태**였다. **§기동 순서 신설**(7단계, Graceful Shutdown의 역순).<br>**`ApprovalService → AgentService` 의존 추가** — DES-007 §3-2·§6-2의 승인↔Agent 상태 연동을 실행할 경로가 아키텍처에 없었다. 허용된 Service 간 의존 **3건 → 4건**, 위상 정렬 `Stage → Approval → Agent → Conversation` 성립 명시. 이벤트 버스안은 1인 로컬 MVP에 과잉이라 기각.<br>레이어 규칙 7을 **Jobs·Bootstrap 공통**으로 확장(Repository 직접 접근 금지), **규칙 9 신설** — 교차 애그리거트 트랜잭션은 Route가 조율한다. Agent 삭제 시 승인 마감(R-04)을 `AgentService → ApprovalService`로 구현하면 규칙 9 없이는 순환이 된다 |
+| **v3.3** | 2026-09-02 | **Layer 2 개발 중 반복 예외 명문화 (레이어 규칙 10, 결정 변경 아님).** Layer 2-6(`ApprovalService`가 `MessageRepository`·`ConversationRepository` 직접 주입 — 원자성)·2-7(`PhaseRepository`가 `artifacts`·`approvals`를 JOIN 직접 집계 — 읽기 전용)·2-9(`ApprovalService`가 `ArtifactRepository` 직접 주입 — 읽기 전용)에서 같은 성격의 예외가 세 번 나왔다. **§Repository 직접 접근 예외 신설** — 허용 조건 (a) 원자성 / (b) 읽기 전용 조회·집계, 금지 대상(상태 전이·검증이 붙은 쓰기), 무순환 보장 근거(Repository는 Service를 부르지 않아 호출 그래프에 간선을 추가하지 않는다)를 명시. 컴포넌트 수·허용된 Service 간 의존 4건·위상 정렬 변경 없음 |
+| **v3.4** | 2026-09-03 | **레이어 규칙 9 적용 사례 추가 (대표 결정 D-1 B안) — REV-M-01 해소.** test 스킬 리뷰에서 `ProjectService.cascadeToAgents()`가 `AgentRepository`에 직접 상태 전이를 써 레이어 규칙 10의 금지 조항("상태 전이·검증이 붙은 쓰기는 예외 대상이 아니다")을 위반하고 있음이 드러났다(REV-M-01) — 그 결과 `AgentService`가 소유한 `cascadeToTasks()`를 거치지 않아 Project 취소·일시정지가 Task까지 전파되지 않았다(FIND-01, DES-004 §6). 새 Service 간 의존을 허용 목록에 추가하는 대신, R-04와 같은 패턴으로 **Route가 트랜잭션을 조율**하도록 정정한다 — `PATCH /api/projects/:id/status`가 `projectService.updateStatusSync()` + `agentService.cascadeFromProjectSync()`를 순서대로 호출한다(구현 정합 확인: 커밋 `3700f2b`). 컴포넌트 수·허용된 Service 간 의존 4건·위상 정렬 변경 없음(레이어 규칙 9 적용 사례만 추가) |
+| **v3.5** | 2026-09-03 | **허용된 Service 간 의존 4건 → 5건 (대표 결정 R2-02 (b)안) — 레이어 규칙 10 잔여 해소.** 2차 재리뷰에서 `AgentService.cascadeToTasks()`가 `TaskService`를 거치지 않고 `taskRepo`에 상태 전이를 직접 써 규칙 10의 금지 조항을 위반하고 있음이 드러났다. "`status_changes`를 직접 쓰는 것과 같은 원칙"이라는 정당화는 성립하지 않는다 — `status_changes`는 상태 머신이 없는 감사 로그이고 `tasks`는 상태 머신이 있는 애그리거트다. 게다가 v3.4(D-1)가 정확히 같은 논리로 `ProjectService → agentRepo`를 위반으로 판정했으므로 Task에만 예외를 두면 자기모순이다. **`TaskService.cascadeStatusSync()` 동기 코어를 추출**하고 `AgentService`가 `TaskRepository` 대신 `TaskService`를 주입받도록 교정 — 허용된 Service 간 의존 **4건 → 5건**(`AgentService → TaskService`), 위상 정렬 `Stage → Approval → Agent → {Conversation, Task}` 무순환 유지(`TaskService`가 `AgentService`를 참조하지 않음을 grep 확인). 동작 변경 없는 구조 교정이며, `project-cascade.test.ts`의 기존 캐스케이드 테스트가 수정 없이 그대로 통과함이 근거다(구현 정합 확인: 커밋 `8e47972`) |

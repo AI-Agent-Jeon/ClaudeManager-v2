@@ -1,0 +1,100 @@
+import { SHUTDOWN_TIMEOUT_MS } from '../shared/constants.js';
+import { buildApp } from './app.js';
+import { buildBootstrapService } from './bootstrap/bootstrap.service.js';
+import { isLoopbackHost } from './config.js';
+import { ApprovalTimeoutJob } from './jobs/approval-timeout.job.js';
+import { buildApprovalService } from './routes/approvals.routes.js';
+
+/**
+ * 서버 진입점 — listen + Graceful Shutdown
+ *
+ * 정의 원본: DES-001 v3.2 §기동 순서 · §Graceful Shutdown
+ *
+ * 기동 순서 1~4단계는 buildApp이 담당한다. 여기는 5~7단계다.
+ */
+
+async function main(): Promise<void> {
+  const app = await buildApp({ logger: true });
+  const { host, port, authSecretGenerated, authSecret } = app.config;
+
+  // SEC-06 — Phase 1은 DES-001 §접속 경계상 루프백 전용이다("외부 노출
+  // 없음"이 RISK-010 인증 보안 완화의 전제). 거부하지는 않는다 — 대표가
+  // 의도적으로 CM_HOST를 바꿀 수 있다(개발 지시 §5-a) — 눈에 띄게 경고만 한다.
+  if (!isLoopbackHost(host)) {
+    console.info(
+      [
+        '',
+        `  ⚠ CM_HOST가 루프백이 아닙니다 (현재: ${host}). Phase 1은 외부 노출을`,
+        '     상정하지 않습니다 — 의도한 설정이 맞는지 확인하세요.',
+        '',
+      ].join('\n'),
+    );
+  }
+
+  if (authSecretGenerated) {
+    // ADR-005: 시크릿 미설정 시 랜덤 생성 후 콘솔 출력.
+    // 매 기동마다 값이 바뀌어 기존 토큰이 무효가 되므로 반드시 알린다.
+    console.info(
+      [
+        '',
+        '  ⚠ CM_AUTH_SECRET이 설정되지 않아 이번 기동용 시크릿을 생성했습니다.',
+        `     ${authSecret}`,
+        '     .env에 CM_AUTH_SECRET으로 저장하지 않으면 재시작 시 토큰이 무효가 됩니다.',
+        '',
+      ].join('\n'),
+    );
+  }
+
+  // 5단계 — CH-MAIN·Phase 1·7단계 멱등 시드 (R-01). 실패하면 아래 catch(main() 바깥)로
+  // 던져 listen하지 않고 종료한다 — 반쪽으로 도는 서버보다 즉시 드러나는 편이 낫다.
+  const bootstrapService = buildBootstrapService(app);
+  await bootstrapService.seed();
+
+  // 6단계 — 타임아웃 자동 진행 스케줄러 시작 (R-02). 시드 완료 후여야 한다 —
+  // 조회 대상 테이블(phases·stages)이 비어 있으면 안 된다.
+  const approvalTimeoutJob = new ApprovalTimeoutJob(buildApprovalService(app), app.log);
+  approvalTimeoutJob.start();
+
+  // 7단계
+  await app.listen({ host, port });
+
+  let shuttingDown = false;
+
+  const shutdown = async (signal: string): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    app.log.info({ signal }, 'graceful shutdown 시작');
+
+    // 시간 안에 끝나지 않으면 강제 종료한다. 진행 중인 요청을 기다리되
+    // 무한정 기다리지는 않는다 (FR-001).
+    const timer = setTimeout(() => {
+      app.log.error('shutdown timeout — 강제 종료');
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS);
+    timer.unref();
+
+    try {
+      // 가장 먼저 잡을 멈춘다 (R-02) — DB를 닫은 뒤 tick이 돌면 연결 오류가 난다.
+      approvalTimeoutJob.stop();
+
+      // app.close()가 onClose 훅을 등록 역순으로 실행한다:
+      //   WS 소켓 정리(1001) → DB 종료
+      await app.close();
+      clearTimeout(timer);
+      process.exit(0);
+    } catch (err) {
+      app.log.error({ err }, 'shutdown 실패');
+      process.exit(1);
+    }
+  };
+
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+}
+
+main().catch((err) => {
+  // FR-001 수용 기준: DB 연결에 실패하면 에러 메시지와 함께 시작이 중단된다
+  console.error('서버 시작 실패:', err instanceof Error ? err.message : err);
+  process.exit(1);
+});

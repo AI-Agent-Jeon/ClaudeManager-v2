@@ -2,9 +2,9 @@
 
 > Phase 1: 기반 구축
 > 문서코드: DES-006
-> 버전: **v3.1 (2026-09-02)** — SCR-CH01~13 표시 데이터 정의 완료 (§3-1)
-> 대상: **CLI 32개 화면** (기존 19 + 대화·승인·진행 13)
-> **원본**: [Notion DES-006](https://app.notion.com/p/3c5d066504ec8137980bee851fb061a3) · Git 동기화 2026-09-01
+> 버전: **v3.5 (2026-09-03)** — `cm artifacts add` 옵션명 오기 정정(`--stage`→`--skill`, DES-006 문서 결함) + `cm chat main`/`agent <id>`/`log` 읽음 처리 서술 갱신(D-2) + `cm artifacts add` 화면 신설(D-3)
+> 대상: **CLI 34개 화면** (기존 19 + 대화·승인·진행 15)
+> **원본**: [Notion DES-006](https://app.notion.com/p/3c5d066504ec8137980bee851fb061a3) · Git 동기화 2026-09-03
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
 ## 목적
@@ -71,12 +71,15 @@ CLI에는 버튼·모달이 없다. 아래 대응 관계로 GUI 명세 구조를
 | **SCR-CH07** | `cm approvals [--pending|--resolved]` | 승인함 목록 | **FR-028** | 필요 |
 | **SCR-CH08** | `cm review <id>` | 승인 건 상세 (안건·산출물·근거·영향) | **FR-028** | 필요 |
 | **SCR-CH09** | `cm stage start <skill>` | 단계 착수 (게이트 3단 검증) | **FR-030** | 필요 |
+| **SCR-CH14** | `cm stage complete <skill>` | 단계 완료 | **FR-030** | 필요 |
 | **SCR-CH10** | `cm artifacts [--sync <상태>]` | 산출물 + 동기화 상태 | **FR-031** | 필요 |
+| **SCR-CH15** | `cm artifacts add --skill <skill> --code <코드> --title "<제목>" [--notion-url <url>] [--git-path <경로>]` | 산출물 등록 (upsert) | **FR-031** | 필요 |
 | **SCR-CH11** | `cm chat list [--type|--status]` | 대화 채널 목록 (아카이브 포함) | **FR-026** | 필요 |
 | **SCR-CH12** | `cm chat log <채널id> [--since]` | 대화 본문 출력·내보내기 | **FR-027** | 필요 |
 | **SCR-CH13** | `cm chat search "<검색어>"` | 전 채널 전문 검색 (FTS5) | **FR-027** | 필요 |
 
-**합계 32화면** — 기존 19 + 대화·승인·진행 13 (v3 신규). PLN-002 v3 "CLI 화면 19 → 32"와 일치한다.
+**합계 34화면** — 기존 19 + 대화·승인·진행 15 (v3 13종 + v3.2 신규 1종 `SCR-CH14` + v3.4 신규 1종 `SCR-CH15`). PLN-002 v3 "CLI 화면 19 → 32"는 **34로 갱신**한다 — v3.2에서 `cm stage complete`(대표 결정 A안) +1건(+3%), v3.4에서 `cm artifacts add`(대표 결정 D-3) +1건(+3%), §5 범위 변경 트리거 모두 미발동.
+**ID는 §2 채번 순서(CH01~CH13, 이어서 CH14·CH15)를 유지**하되, 짝을 이루는 화면은 표에서 인접 배치한다 — `start`·`complete`는 SCR-CH09 바로 뒤, **`cm artifacts add`(SCR-CH15)는 SCR-CH10 바로 뒤**(조회·등록이 한 쌍임을 보이기 위해). 이하 §3-1·§4-5의 표에도 같은 배치를 적용한다.
 
 ---
 
@@ -106,14 +109,14 @@ CLI에는 버튼·모달이 없다. 아래 대응 관계로 GUI 명세 구조를
 | SCR-T04 | Task 제목, ID, 소속 Agent, 이전상태 → 이후상태, 변경일시 | PATCH /api/tasks/:id/status |
 | SCR-SC01 | 행별: 시각, 엔티티 유형, (필터 없을 때) ID(8자), From, To, 변경자 / 하단: 페이지 n/m, 총 건수 | GET /api/status-changes |
 
-### 3-1. 대화·승인·진행 13화면 — **v3.1 신규**
+### 3-1. 대화·승인·진행 15화면 — **v3.1 신규 13 + v3.2 신규 1 + v3.4 신규 1**
 
 > DES-002 v2.1 응답 스키마에서 도출했다. **응답 필드에 없는 것을 화면에 만들지 않는다.**
 
 | 화면 ID | 표시 데이터 (필드 전체) | 출처 |
 |---------|----------------------|------|
-| SCR-CH01 | 채널 제목(Main), 최근 메시지 20건 — 행별: 시각, 발신자(`대표`/`Main`/`Agent`/`시스템`), 유형 배지(MSG-01~06), 본문. **MSG-03은 4단 접기**(요약·수행내용·산출물·미해결), **MSG-04는 ⚠ 카드**(안건·선택지·승인ID(8자)·`cm decide` 안내), **MSG-05는 접힌 시스템 라인** / 하단: REPL 프롬프트 `>`, WS 연결 상태 | GET /api/conversations?type=main → GET /api/conversations/:id/messages · WS |
-| SCR-CH02 | SCR-CH01 전부 + 채널 제목(Agent명), **Agent 상태 + `waiting_reason`**, 채널 상태(active/readonly/archived). `readonly`·`archived`면 입력창 대신 "읽기 전용" 안내 | 동일 + GET /api/agents/:id |
+| SCR-CH01 | 채널 제목(Main), 최근 메시지 20건 — 행별: 시각, 발신자(`대표`/`Main`/`Agent`/`시스템`), 유형 배지(MSG-01~06), 본문. **MSG-03은 4단 접기**(요약·수행내용·산출물·미해결), **MSG-04는 ⚠ 카드**(안건·선택지·승인ID(8자)·`cm decide` 안내), **MSG-05는 접힌 시스템 라인** / 하단: REPL 프롬프트 `>`, WS 연결 상태 | GET /api/conversations?type=main → GET /api/conversations/:id/messages · **PATCH .../read**(진입 시 읽음 처리, v3.3 · D-2) · WS |
+| SCR-CH02 | SCR-CH01 전부 + 채널 제목(Agent명), **Agent 상태 + `waiting_reason`**, 채널 상태(active/readonly/archived). `readonly`·`archived`면 입력창 대신 "읽기 전용" 안내 | 동일 + GET /api/agents/:id + **PATCH .../read**(진입 시 읽음 처리, `readonly`·`archived`도 호출 대상) |
 | SCR-CH03 | ✓ 전송 완료, 메시지 ID(8자), 채널 제목, 전송 시각 | POST /api/conversations/:id/messages |
 | SCR-CH04 | 행별: 승인 ID(8자), 유형(APV-*), 등급, 안건, 요청자, **경과 시간**, **잔여 시간**(보통 등급만 · 높음은 `무기한`) / 하단: 총 건수 + `cm review <id>` 안내 | GET /api/approvals?status=pending |
 | SCR-CH05 | 승인 ID, 안건, 결정(승인/반려/조건부), 채택 선택지 코드·라벨, 사유, 처리 시각 + **Agent 재개 여부**(반려면 "대기 유지") + APV-GATE 승인 시 다음 단계명 + `cm stage start <skill>` 안내 | POST /api/approvals/:id/resolve |
@@ -121,12 +124,18 @@ CLI에는 버튼·모달이 없다. 아래 대응 관계로 GUI 명세 구조를
 | SCR-CH07 | 행별: 승인 ID(8자), 유형, 등급, 안건, 상태, 요청자, 경과/잔여 / 하단: 페이지 n/m, 총 건수, 적용 필터(`--pending`/`--resolved`) | GET /api/approvals |
 | SCR-CH08 | **안건 블록**: 안건, 유형, 등급, 단계, 요청자, 요청시각(경과) / **산출물**: 코드, 제목, Git 경로, Notion URL, **동기화 상태** / **선택지**: 코드, 라벨, 권고 표시 / **근거** / **영향 범위**: 되돌림 가능 여부, 영향 문서 목록 / 응답 명령 2행 안내 | GET /api/approvals/:id |
 | SCR-CH09 | 대상 단계, 직전 단계 상태, 게이트 필요 여부 + 승인 ID + 통과 여부, WIP 검사 결과, 착수 결과(`pending → in_progress`), 착수 시각 / **실패 시**: 걸린 가드 번호(1~3) + 사유 + 해결 명령 | POST /api/stages/:id/start |
+| SCR-CH14 | 대상 단계, 처리 전 상태, 완료 결과(`in_progress → completed`), 완료 시각 / **실패 시**: `STAGE_NOT_FOUND` 또는 `INVALID_TRANSITION` + 현재 상태 + 사유. **`phases.current_stage`는 바뀌지 않는다는 안내 1행**(다음 단계는 `cm stage start`로 별도 착수) | POST /api/stages/:id/complete |
 | SCR-CH10 | 행별: 코드, 제목, 상태(draft/review/approved), **동기화 상태**(synced/notion_only/git_only/missing), Notion ✅❌, Git ✅❌, 최종수정 / 하단: 단계 필터, 총 건수 + **경고블록 — `notion_only`는 동기화 누락이지 프로세스 위반이 아니다** | GET /api/artifacts |
+| SCR-CH15 | ✓ 등록/갱신 완료, 산출물 코드, 제목, 소속 단계, **동작 구분**(신규 등록 / 기존 갱신), **동기화 상태**(등록 직후 파생값 — Notion/Git ✅❌), 처리 시각 / **실패 시**: `VALIDATION_ERROR`(필수 옵션 누락) 또는 `STAGE_NOT_FOUND` + `cm progress` 안내 | POST /api/artifacts |
 | SCR-CH11 | 행별: 채널 ID(8자), 종류(main/agent), 제목, 상태, **미읽음 수**, 마지막 메시지 시각 / 아카이브 채널은 제목 뒤 `(삭제됨)` 표기(`entitySnapshot.agentName` 사용) / 하단: 적용 필터, 총 건수 | GET /api/conversations |
-| SCR-CH12 | 채널 제목, 조회 기간, 메시지 전문 — 행별: 시각, 발신자, 유형, 본문(**MSG-03은 4단 전개**) / 하단: 총 건수, `--since` 적용값 | GET /api/conversations/:id/messages · /export |
+| SCR-CH12 | 채널 제목, 조회 기간, 메시지 전문 — 행별: 시각, 발신자, 유형, 본문(**MSG-03은 4단 전개**) / 하단: 총 건수, `--since` 적용값 | GET /api/conversations/:id/messages · /export · **PATCH .../read**(조회 시 읽음 처리, v3.3 · D-2) |
 | SCR-CH13 | 행별: 채널 제목, 시각, **snippet**(`<mark>` → 터미널 강조), 메시지 ID(8자) / 하단: 검색어, 총 건수 + **경고블록 — 한국어 조사로 인한 미검출 가능성**(DES-003 §3-3) | GET /api/conversations/search |
 
 > **공통 규칙**: ID는 목록에서 8자, 단건 출력에서 전체 UUID. 시각은 `YYYY-MM-DD HH:mm:ss`(로컬). 경과·잔여 시간은 서버가 계산해 내려준 `elapsedSeconds`·`remainingSeconds`를 사람이 읽는 형태로 변환한다(예: `1시간 12분 경과`).
+>
+> **SCR-CH05의 `cm stage start <skill>` 안내는 `cm stage complete` 신설(v3.2) 후에도 그대로 유효하다.** 게이트 승인(APV-GATE)은 **직전 단계가 이미 `completed`인 상태에서** 다음 단계 착수 허가를 구하는 절차다(DES-007 §7-1 가드 1). 즉 순서는 `cm stage complete <현재 단계>` → (게이트 필요 시) 승인 요청·`cm decide` 처리 → `cm stage start <다음 단계>`다. SCR-CH05는 이 흐름의 마지막 안내이므로 `complete` 명령을 언급할 필요가 없다.
+>
+> **읽음 처리는 채널 진입 시 자동이다 (v3.3 · D-2).** `cm chat main`·`cm chat agent <id>`가 최근 메시지를 불러온 직후, `cm chat log <채널id>`가 조회를 마친 직후 각각 `PATCH /api/conversations/:id/read`를 호출해 `last_read_at`을 갱신한다. 대표가 별도로 실행하는 명령이 아니다 — SCR-CH11의 **미읽음 수**가 채널을 열면 자동으로 줄어드는 근거가 이것이다. `readonly`·`archived` 채널도 호출 대상이다 — 읽음 처리는 발화가 아니라 열람 기록이므로 `CONVERSATION_ARCHIVED`를 던지지 않는다(DES-002 v2.5 `PATCH /api/conversations/:id/read`).
 
 ---
 
@@ -214,7 +223,7 @@ CLI에는 버튼·모달이 없다. 아래 대응 관계로 GUI 명세 구조를
 
 ---
 
-### 4-5. 대화 · 승인 · 진행 — **v3 신규 (13화면)**
+### 4-5. 대화 · 승인 · 진행 — **v3 신규 13화면 + v3.2 신규 1화면**
 
 > D-09(대화) · D-16(승인 게이트) 승인으로 Phase 1에 편입. DES-013 §5 · DES-014 §6 정의를 인터랙션 규격으로 옮긴다.
 
@@ -257,7 +266,7 @@ CLI에는 버튼·모달이 없다. 아래 대응 관계로 GUI 명세 구조를
 | EVT-CH05-4 | — | `cm decide <id> --approve` | 이미 처리됨 | 요약토스트 | — | ✗ `APPROVAL_ALREADY_RESOLVED` + 기존 결정·처리시각 | POST resolve |
 | EVT-CH05-5 | — | `cm decide <id>` (플래그 없음) | `pending` | **프롬프트** | **PRM-CH01** | 안건 요약 + 선택지 + [승인/반려/취소] | — |
 
-#### 진행 (SCR-CH06·09·10)
+#### 진행 (SCR-CH06·09·14·10·15)
 
 | 이벤트 ID | 화면 | 트리거 | 사전 조건 | 결과 유형 | 대상 | 표시 데이터 | API |
 |-----------|------|--------|----------|----------|------|-----------|-----|
@@ -268,8 +277,14 @@ CLI에는 버튼·모달이 없다. 아래 대응 관계로 GUI 명세 구조를
 | EVT-CH09-2 | — | `cm stage start <skill>` | 게이트 미통과 | 요약토스트 + 후속안내 | — | ✗ `GATE_NOT_PASSED` + **필요한 승인 ID** + `cm review <id>` | POST stages/start |
 | EVT-CH09-3 | — | `cm stage start <skill>` | 직전 단계 미완료 | 요약토스트 | — | ✗ `INVALID_TRANSITION` + 직전 단계명·현재 상태 | POST stages/start |
 | EVT-CH09-4 | — | `cm stage start <skill>` | WIP 위반, 면제 없음 | 요약토스트 + 후속안내 | — | ✗ `WIP_VIOLATION` + 진행 중 단계명 + `cm progress --waive` | POST stages/start |
+| EVT-CH14-1 | — | `cm stage complete <skill>` | 대상 단계가 `in_progress` | 요약토스트 + 후속안내 | — | ✓ 완료 처리 + 완료 시각 + **"다음 단계는 `cm stage start <skill>`로 착수하세요"** 안내 (`current_stage` 미변경 고지) | POST /api/stages/:id/complete |
+| EVT-CH14-2 | — | `cm stage complete <skill>` | 대상 단계가 `pending`·`completed` | 요약토스트 | — | ✗ `INVALID_TRANSITION` + 현재 상태 + "진행 중 단계만 완료할 수 있습니다" | POST stages/complete |
+| EVT-CH14-3 | — | `cm stage complete <skill>` | 존재하지 않는 단계 | 요약토스트 + 후속안내 | — | ✗ `STAGE_NOT_FOUND` + `cm progress` 안내 | POST stages/complete |
 | EVT-CH10-1 | — | `cm artifacts` | 인증됨 | 출력전환 | SCR-CH10 | 코드·제목·상태·**Notion/Git 동기화 상태** | GET /api/artifacts |
 | EVT-CH10-2 | — | `cm artifacts --sync notion_only` | — | 출력전환 | SCR-CH10 | 한쪽에만 있는 산출물만 필터 | GET artifacts |
+| EVT-CH15-1 | — | `cm artifacts add --skill <skill> --code <코드> --title "<제목>"` | 단계 존재, 필수 옵션 충족 | 요약토스트 + 후속안내 | — | ✓ 등록 완료(신규) 또는 ✓ 갱신 완료(기존) + 코드·동기화 상태 + `cm artifacts` 안내 | POST /api/artifacts |
+| EVT-CH15-2 | — | `cm artifacts add` | `--skill`·`--code`·`--title` 중 누락 | 요약토스트 | — | ✗ 필수 옵션 + 사용법 1행 | — |
+| EVT-CH15-3 | — | `cm artifacts add --skill <없는 skill>` | — | 요약토스트 + 후속안내 | — | ✗ `STAGE_NOT_FOUND` + `cm progress` 안내 | POST artifacts |
 
 > **`cm decide`의 후속 안내가 중요하다.** 승인 후 무엇이 일어나는지(Agent 재개 / 다음 단계 시작)를 알려주지 않으면 대표는 "눌렀는데 뭐가 됐지?"가 된다. 반려 시 **Agent가 대기 상태를 유지한다**는 점도 반드시 알린다 (DES-007 v2 §3-2).
 
@@ -464,7 +479,11 @@ ready → cancelled                               (취소)
 
 | 버전 | 날짜 | 내용 |
 |------|------|------|
+| **v3.5** | 2026-09-03 | **`cm artifacts add` 옵션명 오기 정정 — 문서 결함(DES-006), test 9단계 수정 루프 2차.** 실제 CLI 구현(`src/cli/commands/progress.ts:901`)은 `--skill <skill>`인데 본 문서는 `--stage <skill>`로 기재되어 있어, **문서대로 명령을 치면 `commander`가 필수 옵션 누락으로 실패한다.** 값이 스킬명(`plan`·`design`…)이므로 `--skill`이 정확한 이름이다 — `--stage`는 stage UUID를 넣으라는 뜻으로 오독된다. §2 SCR-CH15 인벤토리 행·§4-5 EVT-CH15-1~3 예시·옵션 누락 안내 문구 전건 정정. 화면 수·동작 변경 없음(표기만 정정) |
 | v1 | 2026-08-24 | 최초 작성 — 화면 인벤토리 + 입력/출력 + 네비게이션 맵 |
 | v2 | 2026-09-01 | 인터랙션 명세(§4) · 프롬프트 명세(§5) · 전이 매트릭스(§6) 추가, 표시 데이터 필드 단위 확정, 화면 수 19개로 정정 |
 | **v3.1** | 2026-09-02 | **§3-1 신설 — SCR-CH01~13 표시 데이터 전건 정의.** v3은 §4-5 인터랙션("무엇을 입력하면 무엇이 뜨는가")만 정의하고 **§3 형식의 출력 필드 목록을 비워두어**, dev-sub가 화면에 무엇을 찍을지 스스로 정해야 하는 상태였다.<br>DES-002 v2.1 응답 스키마에서 도출했다 — **응답 필드에 없는 것을 화면에 만들지 않는다.** ID 자릿수·시각 포맷·경과 시간 변환 공통 규칙 명시. 미해결 1건 해소 |
+| **v3.4** | 2026-09-03 | **`cm artifacts add` 화면 신설 (SCR-CH15) — 대표 결정 D-3, REV-M-06 해소.** `POST /api/artifacts`(DES-002 v2.6) 반영. CLI 화면 **33 → 34**(+1, +3%, §5 범위 트리거 미발동).<br>§2 화면 인벤토리·§3-1 표시 데이터에 SCR-CH15 추가(SCR-CH10 바로 뒤 배치 — 조회·등록이 한 쌍). §4-5 진행 절에 `EVT-CH15-1~3`(성공·필수 옵션 누락·`STAGE_NOT_FOUND`) 추가, EVT-CH14 형식을 그대로 따름 |
+| **v3.3** | 2026-09-03 | **읽음 처리 서술 갱신 — 대표 결정 D-2, FIND-02 해소.** `PATCH /api/conversations/:id/read`(DES-002 v2.5) 반영. 신규 화면은 추가하지 않는다(기존 CLI 화면 33 유지) — `cm chat main`(SCR-CH01)·`cm chat agent <id>`(SCR-CH02)·`cm chat log`(SCR-CH12)가 채널 진입·조회 시 이 엔드포인트를 자동 호출하도록 §3-1 출처 열과 §4-5 직후 각주에 명시. `readonly`·`archived` 채널도 호출 대상임을 명시(발화가 아닌 열람 기록) |
+| **v3.2** | 2026-09-02 | **`cm stage complete <skill>` 화면 신설 (SCR-CH14) — 대표 결정 A안.** DES-002 v2.4 `POST /api/stages/:id/complete` 신규 반영. CLI 화면 **32 → 33**(+1, +3%, §5 범위 트리거 미발동).<br>§2 화면 인벤토리·§3-1 표시 데이터에 SCR-CH14 추가(SCR-CH09 바로 뒤 배치 — `start`·`complete`가 한 쌍). §4-5 진행 절에 `EVT-CH14-1~3`(성공·`INVALID_TRANSITION`·`STAGE_NOT_FOUND`) 추가, EVT-CH09 형식을 그대로 따름.<br>SCR-CH05(승인 처리) 후속 안내 `cm stage start` 문구는 **그대로 유효함을 확인** — 게이트 승인은 직전 단계가 이미 `completed`인 상태에서 이뤄지므로(DES-007 §7-1 가드 1) `complete`는 그 이전 단계에서 이미 실행된다 |
 | **v3** | 2026-09-01 | **대화·승인·진행 13화면 추가** (SCR-CH01~13) — D-09·D-16 승인 반영. 화면 19 → **32개**.<br>§4-5 인터랙션 명세 신규(이벤트 30건), 화면 인벤토리 확장. `cm decide` 후속 안내에 **Agent 재개 여부**를 표시하도록 규정(반려 시 대기 유지). `cm review`에 **동기화 누락이 프로세스 위반이 아님**을 명시하는 경고블록 추가 |

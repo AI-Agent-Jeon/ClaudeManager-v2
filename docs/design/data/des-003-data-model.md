@@ -1,7 +1,7 @@
 # DES-003 데이터 모델
 
 > Phase 1: 기반 구축
-> 버전: **v2.1 (2026-09-02)** — 교차 검증 정정. `status_changes` 확장 (§3-5)
+> 버전: **v2.2 (2026-09-02)** — `conversations.last_read_at` 추가, 마이그레이션 007 (DEV-D-05)
 > **원본**: [Notion DES-003](https://app.notion.com/p/3c5d066504ec8139b48ec253164692d4) · Git 동기화 2026-09-01
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
@@ -175,6 +175,19 @@ erDiagram
 | `entity_snapshot` | TEXT | NULL | JSON `{agent_name, project_name, agent_type}` |
 | `created_at` | TEXT | NOT NULL | ISO 8601 |
 | `archived_at` | TEXT | NULL | 아카이브 시각 |
+| `last_read_at` | TEXT | NULL | **읽음 포인터** (v2.2 · DEV-D-05). NULL = 한 번도 열지 않음 |
+
+> **`unreadCount`의 데이터 원본 (v2.2 · 대표 승인 2026-09-02)**
+> `Conversation.unreadCount`를 설계서 4곳(DES-002 §4 · DES-004 공통 타입 · DES-006 SCR-CH11 · DES-013 §4-5)이 요구했으나 **읽음 상태를 저장할 자리가 없었다.** "파생값"이라 적혀 있었지만 파생할 원본이 없는 상태였다 — develop Layer 2-3에서 드러났다.
+>
+> ```sql
+> SELECT COUNT(*) FROM messages
+>  WHERE conversation_id = ? AND created_at > ?   -- last_read_at
+> ```
+> 경계는 `>` 다. 포인터와 같은 시각의 메시지는 읽은 것으로 본다.
+> `messages_conv_idx(conversation_id, created_at)`가 그대로 쓰이므로 **별도 인덱스가 필요 없다.**
+>
+> **왜 채널당 컬럼 하나인가**: 사용자가 대표 한 명이다. 메시지별 읽음 플래그는 1인 시스템에 과잉이고, Phase 2로 미루면 웹 배지 작업과 섞여 더 번거로워진다.
 
 **제약**
 - `channel_type='main'`인 행은 **전역 1개**. SQLite 부분 유니크 인덱스로 강제
@@ -514,6 +527,7 @@ Phase 2 확장 후보(FR-013 `worktrees`, FR-014 `agent_logs`)는 v1.1 기재를
 004_approvals        approvals  (messages·stages 이후여야 FK 성립)
 005_artifacts        artifacts → wip_waivers
 006_status_ext       status_changes.entity_type CHECK 6종 확장           (v2.1 · §3-5)
+007_conversation_read  conversations.last_read_at 추가                   (v2.2 · DEV-D-05)
 ```
 
 > **006은 SQLite 특성상 테이블 재작성이다.** SQLite는 `ALTER TABLE … DROP CONSTRAINT`를 지원하지 않으므로 CHECK를 바꾸려면 새 테이블 생성 → `INSERT INTO … SELECT` → 원본 DROP → RENAME 순서로 처리한다. `status_changes`는 Phase 1 실데이터가 없어 비용이 없다.

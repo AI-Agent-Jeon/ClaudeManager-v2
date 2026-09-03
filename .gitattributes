@@ -1,0 +1,18 @@
+# 줄바꿈 정규화 — biome.json의 formatter.lineEnding="lf"와 맞춘다.
+#
+# 이 파일이 없으면 Windows의 core.autocrlf=true가 체크아웃 시 LF→CRLF로
+# 바꿔놓고, biome가 그 CR을 전건 오류로 잡는다. 신규 clone 직후
+# `npm run lint`가 바로 깨진다 (NEW-05).
+#
+# eol=lf는 autocrlf보다 우선하므로 모든 플랫폼에서 작업 트리가 LF로 유지된다.
+
+* text=auto eol=lf
+
+# 바이너리 — 변환 금지
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.db binary
