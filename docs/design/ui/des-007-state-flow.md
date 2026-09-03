@@ -1,8 +1,8 @@
 # DES-007 상태 흐름도
 
 > Phase 1: 기반 구축
-> 버전: **v2.2 (2026-09-02)** — §7 단계 완료 전이(`InProgress → Completed`)에 트리거·가드 명시 — 플로우 단절 보완 (대표 결정 A안)
-> **원본**: [Notion DES-007](https://app.notion.com/p/3c5d066504ec8174881ad45d1cc9918b) · Git 동기화 2026-09-02
+> 버전: **v2.3 (2026-09-03)** — §8 채널 readonly 전이가 경로 무관(상태 기준)임을 명확화 — FIND-06 해소
+> **원본**: [Notion DES-007](https://app.notion.com/p/3c5d066504ec8174881ad45d1cc9918b) · Git 동기화 2026-09-03
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
 ---
@@ -342,6 +342,8 @@ CLAUDE.md 스킬 전환 모드에서 파생한다. **저장하지 않는다.**
 | **승인 `rejected` (APV-GATE)** | **Stage 전이 없음** — 대상 단계가 `pending`에 머문다 | **v2.1 정정** — 차단 유지가 반려의 효력 |
 | **Agent 삭제** | **그 Agent의 `pending` 승인 → `rejected`** | **v2.1 신규 (R-04)** — `resolution='system:agent_deleted'` |
 
+> **"Agent → Completed / Cancelled ⇒ CH-AGENT → readonly"는 도달 경로에 무관한 규칙이다 (v2.3, FIND-06 해소).** 이 표는 Agent **상태**를 기준으로 규정한다 — Agent가 `completed`·`cancelled`로 바뀌는 경로가 `PATCH /api/agents/:id/status` 직접 호출이든, `Project → Cancelled` 캐스케이드(위 1행)를 통해서든 결과는 같아야 한다. 실제로 한때 이 둘이 갈렸다: 캐스케이드 경로가 `AgentService.cascadeFromProjectSync()` 내부에서 채널 전이를 누락해, 같은 `cancelled` 상태인데 직접 전환은 채널이 readonly이고 캐스케이드 전환은 채널이 쓰기 가능 상태로 남는 결함이 있었다(FIND-06, 이 §8 규정 위반). `ConversationService.markReadonlySync()` 동기 코어 추출로 두 경로가 같은 전이를 타도록 해소했다(DES-004 v2.6 §6 참조). **`Paused`는 이 규칙의 대상이 아니다** — 종료 상태가 아니라 재개 가능한 상태이므로 채널을 readonly로 만들지 않는다(위 2·4행 참조, 코드 확인: `agent.service.ts:389-393`).
+
 ### 8-1. 가드 조건
 
 - Agent 시작: 프로젝트가 `running` 또는 `waiting`일 때만 가능
@@ -399,6 +401,7 @@ CLAUDE.md 스킬 전환 모드에서 파생한다. **저장하지 않는다.**
 
 | 버전 | 날짜 | 내용 |
 |------|------|------|
+| **v2.3** | 2026-09-03 | **§8 채널 readonly 전이가 경로 무관(Agent 상태 기준)임을 명확화 — FIND-06 해소.** test 9단계 수정 루프 2차, 대표 결정으로 즉시 반영.<br>**경위**: D-1(FIND-01 해소, Project 취소 캐스케이드가 Task까지 전파하지 않던 결함)을 DES-004 v2.5로 처음 반영할 때는 채널 readonly 전이를 "범위 밖"으로 남겼다 — 당시 FIND-01의 지적 범위가 Task 캐스케이드였을 뿐 채널 상태는 검토 대상이 아니었기 때문이다. 그런데 이 "범위 밖" 처리 자체가 새 결함이었다 — 같은 `agent.status = cancelled`인데 `PATCH /api/agents/:id/status` 직접 호출은 채널을 readonly로 전환하고, Project 취소 캐스케이드 경로는 채널을 쓰기 가능 상태로 방치했다(FIND-06, FIND-01과 같은 성격 — 캐스케이드가 정식 경로의 부수효과를 건너뜀). 본 §8 규정("Agent → Completed/Cancelled ⇒ CH-AGENT → readonly")이 애초에 **Agent 상태 기준**이라 도달 경로를 가리지 않는데도 구현이 어긋나 있었던 것이다.<br>**해소**: `ConversationService.markReadonlySync()` 동기 코어 추출(`createForAgentSync()` 선례와 동일 패턴) — `cascadeFromProjectSync()`가 `targetStatus === 'cancelled'`일 때만 호출한다. `Paused`는 종료 상태가 아니므로 대상에서 제외(코드 확인: `agent.service.ts:389-393`). §8 표 직후에 위 경위를 명시하는 각주 추가. DES-004 v2.6 §6과 정합 |
 | v1 | 2026-08-23 | 최초 작성 (Phase 1 설계) |
 | v1.1 | 2026-08-24 | Phase 2+ 확장 고려사항 추가 |
 | — | 2026-09-01 | Git 동기화 + 승인 반영 필요 항목 주석 추가 (내용 변경 없음) |

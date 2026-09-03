@@ -1,8 +1,8 @@
 # DES-002 API 명세서
 
 > Phase 1: 기반 구축
-> 버전: **v2.4 (2026-09-02)** — `POST /api/stages/:id/complete` 신설 (단계 완료 경로 누락 보완, 대표 결정 A안)
-> **원본**: [Notion DES-002](https://app.notion.com/p/3c5d066504ec81958497d54fc5ab9fd3) · Git 동기화 2026-09-02
+> 버전: **v2.8 (2026-09-03)** — `POST /api/artifacts` upsert가 생략한 `notionUrl`·`gitPath`를 보존하도록 사양 정정(R2-03) · `POST /api/approvals` 요청 예시 필수 필드 누락 정정(NEW-03) · `PATCH /api/conversations/:id/read`(D-2) · `POST /api/artifacts`(D-3) 신설
+> **원본**: [Notion DES-002](https://app.notion.com/p/3c5d066504ec81958497d54fc5ab9fd3) · Git 동기화 2026-09-03
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
 ---
@@ -11,22 +11,24 @@
 
 D-09(대화) · D-16(승인 게이트) · D-18(승인 통합) 반영으로 Phase 1 API가 두 배가 되었다.
 
-| 구분 | v1 | v2 | v2.1 | **v2.4** |
-|------|:---:|:---:|:---:|:---:|
-| Phase 1 엔드포인트 | 16 | 31 | 33 | **34** |
-| Phase 2 예정 | — | 10 | 10 | **10** |
-| **총계** | 16 | 41 | 43 | **44** |
+| 구분 | v1 | v2 | v2.1 | v2.4 | v2.5 | **v2.6** |
+|------|:---:|:---:|:---:|:---:|:---:|:---:|
+| Phase 1 엔드포인트 | 16 | 31 | 33 | 34 | 35 | **36** |
+| Phase 2 예정 | — | 10 | 10 | 10 | 10 | **10** |
+| **총계** | 16 | 41 | 43 | 44 | 45 | **46** |
 
 **v1에서 ❌였던 2건을 이번에 해소한다.**
 
 | v1 미작성 항목 | v2 |
 |---------------|-----|
 | JSON Schema (Fastify 검증용) | ✅ §6 — 공통 정의 + 도출 규칙 + 예시 |
-| 엔드포인트별 에러 코드 매핑 | ✅ §7 — 34종 전건 매핑 + 신규 코드 9종 |
+| 엔드포인트별 에러 코드 매핑 | ✅ §7 — 36종 전건 매핑 + 신규 코드 9종 |
 
-> **Phase 1 34종의 내역**: 기존 16 + 대화 6(REST 5 + WS 1) + 승인·진행 **11** + 전역 WS 1 = **34**.
+> **Phase 1 36종의 내역 (v2.6 기준)**: 기존 16 + 대화 7(REST 6 + WS 1) + 승인·진행 **12** + 전역 WS 1 = **36**.
 > v2.1에서 2종이 늘었다 — `POST /api/phases`(R-01 부트스트랩)와 `POST /api/approvals`(R-07 승인 건 생성). PLN-002 v3의 "16 → 31"은 **33으로 갱신**한다. 증감 +6.5%로 §5 범위 변경 트리거(±20%) 미발동.
 > **v2.4에서 1종이 더 늘었다** — `POST /api/stages/:id/complete`(대표 결정 A안). §7 단계 상태 머신은 `pending → in_progress → completed` 선형인데 `completed`로 만드는 경로가 어디에도 없어, `start`의 가드 1("직전 단계가 `completed`인가")을 영원히 통과할 수 없는 플로우 단절이었다(R-01급 결함, 2026-09-02 교차 검증 누락분). 증감 +3%로 §5 범위 변경 트리거 미발동.
+> **v2.5에서 1종이 더 늘었다** — `PATCH /api/conversations/:id/read`(대표 결정 D-2 A안). `ConversationService.markRead()`(DES-004 v2.4)는 이미 시그니처가 있었으나 호출하는 HTTP 라우트가 없어 `last_read_at`이 갱신되지 않고 `unreadCount`가 영원히 줄지 않는 플로우 단절이었다(FIND-02, 2026-09-03 test 스킬 리뷰 지적 · 런타임 재현 확정). 기각된 B안(`GET .../messages`의 부수효과로 markRead 호출)은 조회에 쓰기가 섞여 채택하지 않는다. Phase 1 엔드포인트 34 → **35**(+3%), §5 범위 변경 트리거 미발동.
+> **v2.6에서 1종이 더 늘었다** — `POST /api/artifacts`(대표 결정 D-3). `ArtifactService.upsert()`(`artifact.service.ts:159`)는 구현되어 있었으나 호출자가 0건이라 `artifacts` 테이블에 행을 만드는 경로가 어느 설계 문서에도 없었다(REV-M-06 — 코드 결함이 아니라 설계 공백). PLN-001 FR-031 수용 기준 2건이 전부 "조회 시 표시"뿐이라 등록을 아무도 규정하지 않았고, 결과적으로 `artifacts`가 영구히 빈 테이블이 되어 FR-031 전체가 도달 불가능했다. `code` UNIQUE 기준 upsert이며 **`status`는 되돌리지 않는다**(승인 흐름이 별도 관리하는 값 — `artifact.repository.ts:139` 근거). Phase 1 엔드포인트 35 → **36**(+3%), §5 범위 변경 트리거 미발동.
 
 ---
 
@@ -95,7 +97,7 @@ Authorization: Bearer <JWT>
 
 ---
 
-## 3. Phase 1 엔드포인트 (34종)
+## 3. Phase 1 엔드포인트 (36종)
 
 ### 3-1. 기존 (16종)
 
@@ -127,12 +129,13 @@ Authorization: Bearer <JWT>
 { "data": { "archivedConversationId": "uuid", "closedApprovalCount": 2 } }
 ```
 
-### 3-2. 대화 (6종) — D-09 · D-27
+### 3-2. 대화 (7종) — D-09 · D-27 · **D-2**
 
 | 메서드 | 경로 | 설명 | Story | 인증 |
 |--------|------|------|-------|:---:|
 | GET | `/api/conversations` | 채널 목록 + 미읽음 수 | FR-026 | ✅ |
 | GET | `/api/conversations/:id/messages` | 메시지 조회 (커서) | FR-027 | ✅ |
+| **PATCH** | **`/api/conversations/:id/read`** | **읽음 처리(`last_read_at` 갱신)** — v2.5 신규 (D-2) | **FR-027** | ✅ |
 | POST | `/api/conversations/:id/messages` | 대표 발화 전송 | FR-027 | ✅ |
 | GET | `/api/conversations/search` | 전 채널 전문 검색 (FTS5) | FR-027 | ✅ |
 | GET | `/api/conversations/:id/export` | 마크다운 내보내기 | FR-027 | ✅ |
@@ -141,7 +144,7 @@ Authorization: Bearer <JWT>
 > **⚠ DES-013 §6-2의 `/api/decisions` 2종은 채택하지 않는다.**
 > D-18로 `decision_requests`가 `approvals`에 통합되었으므로 엔드포인트도 `/api/approvals`로 일원화한다. `GET /api/decisions?status=pending` → `GET /api/approvals?status=pending`, `POST /api/decisions/:id/resolve` → `POST /api/approvals/:id/resolve`.
 
-### 3-3. 승인·진행 (11종) — D-14 · D-16 · D-18 · **R-01 · R-07** · **A안**
+### 3-3. 승인·진행 (12종) — D-14 · D-16 · D-18 · R-01 · R-07 · A안 · **D-3**
 
 | 메서드 | 경로 | 설명 | Story | 인증 |
 |--------|------|------|-------|:---:|
@@ -152,6 +155,7 @@ Authorization: Bearer <JWT>
 | **POST** | **`/api/stages/:id/complete`** | **단계 완료** — v2.4 신규 (A안) | **FR-030** | ✅ |
 | GET | `/api/artifacts` | 단계별 산출물 + 동기화 상태 | FR-031 | ✅ |
 | GET | `/api/artifacts/:id/content` | 산출물 본문 (검토 패널) | FR-031 | ✅ |
+| **POST** | **`/api/artifacts`** | **산출물 등록 (`code` UNIQUE upsert)** — v2.6 신규 (D-3) | **FR-031** | ✅ |
 | GET | `/api/approvals` | 승인 목록 | FR-028 | ✅ |
 | GET | `/api/approvals/:id` | 승인 상세 | FR-028 | ✅ |
 | POST | `/api/approvals/:id/resolve` | 승인·반려·조건부 | FR-028 | ✅ |
@@ -234,6 +238,22 @@ Authorization: Bearer <JWT>
 ```
 
 > `approvalId`는 `msgType='MSG-04'`(의사결정 요청)일 때 채워진다. `approvals.message_id`의 역방향이며, 프런트가 이 메시지를 **액션 버튼이 달린 강조 카드**로 렌더링하는 근거다 (DES-013 §3-2).
+
+### `PATCH /api/conversations/:id/read` — **v2.5 신규 (D-2 A안)**
+
+요청 본문 없음.
+
+읽음 포인터(`conversations.last_read_at`)를 현재 시각으로 옮긴다. `cm chat main`·`cm chat agent`·`cm chat log`가 채널을 열 때 호출한다 (DES-006 v3.3 §4-5).
+
+**응답 `200`** — `Conversation`. 갱신 직후 `unreadCount`는 `0`이다 — §4 `GET /api/conversations`의 파생 규칙과 같은 기준(`last_read_at` 이후 메시지 수, 경계는 `>`)이 적용된다.
+
+| 검증 | 실패 시 |
+|------|--------|
+| 대상 채널이 존재하는가 | `404 CONVERSATION_NOT_FOUND` |
+
+> **기각된 B안**: `GET /api/conversations/:id/messages`가 조회 부수효과로 `markRead()`를 호출하는 안. 조회(GET)에 쓰기가 섞이면 캐싱·재시도가 안전하지 않아진다 — REST 시맨틱을 어긴다. 전용 `PATCH` 엔드포인트(A안)를 채택한다.
+> **`archived`·`readonly` 채널에도 허용한다.** 읽음 처리는 발화가 아니라 열람 기록이라 `CONVERSATION_ARCHIVED`를 던지지 않는다 — 종료된 채널의 과거 대화를 훑어도 미읽음 수는 줄어야 한다.
+> `ConversationService.markRead()`는 DES-004 v2.4에 이미 시그니처가 있었으나 이 엔드포인트가 없어 호출 경로가 없었다(FIND-02). DES-004 v2.5 §14-1에 시퀀스를 신설한다.
 
 ### `POST /api/conversations/:id/messages`
 
@@ -385,12 +405,15 @@ Phase 행과 **그에 속한 7단계를 한 트랜잭션으로 생성**한다. �
     { "code": "A", "label": "예외 승인", "recommended": true },
     { "code": "B", "label": "반려" }
   ],
+  "requestedBy": "main",
   "rationale": "설계 개정과 API 명세를 병행해야 한다",
   "impact": { "documents": ["DES-002", "DES-003"], "reversible": true },
   "stageId": "uuid",
   "conversationId": "uuid"
 }
 ```
+
+> **`requestedBy`는 필수다** (`approval.schema.ts:45` `required` — 누락 시 `400 VALIDATION_ERROR`). 안건을 올리는 주체(`main`·`agent:<id>` 등)를 식별한다 — `GET /api/approvals` 응답의 `requestedBy` 필드(§5 목록 예시)가 여기서 채워진다. **NEW-03 — v2.6에서 예시에 누락되어 있던 것을 정정.**
 
 **응답 `201`** — `ApprovalDetail`. 부수 효과로 해당 채널에 `MSG-04`가 기록되고 `approval:created`가 브로드캐스트된다.
 
@@ -403,7 +426,42 @@ Phase 행과 **그에 속한 7단계를 한 트랜잭션으로 생성**한다. �
 
 > **`deadlineAt`은 클라이언트가 정하지 않는다.** 서버가 등급에서 파생한다 — `high`면 `null`, `medium`이면 `now + 30분`(D-10). 요청 본문에 실어도 `additionalProperties: false`로 걸린다.
 
-> **CLI 화면은 Phase 1에 추가하지 않는다.** Phase 1의 호출자는 Agent·Main(내부)뿐이고, 대표가 직접 안건을 올리는 화면은 **Phase 2 웹 진행 보드**(EVT-PH-5)다. 이 엔드포인트는 DES-006 v3.2의 CLI 33화면(SCR-CH14 `cm stage complete` 포함) 수에 영향을 주지 않는다.
+> **CLI 화면은 Phase 1에 추가하지 않는다.** Phase 1의 호출자는 Agent·Main(내부)뿐이고, 대표가 직접 안건을 올리는 화면은 **Phase 2 웹 진행 보드**(EVT-PH-5)다. 이 엔드포인트는 DES-006 CLI 화면 수(v3.5 기준 34개)에 영향을 주지 않는다.
+
+### `POST /api/artifacts` — **v2.6 신규 (D-3)**
+
+산출물 행을 등록·갱신한다. `ArtifactService.upsert()`(DES-004 §전체 함수 시그니처 요약)는 이미 구현되어 있었으나 호출자가 없어 `artifacts` 테이블이 영구히 비어 있었다(REV-M-06). FR-031(산출물 동기화 추적)은 이 경로 없이는 도달 불가능했다.
+
+**요청**
+```json
+{
+  "stageId": "uuid",
+  "code": "DES-016",
+  "title": "신규 설계서",
+  "notionUrl": "https://app.notion.com/p/…",
+  "gitPath": "docs/design/des-016-example.md"
+}
+```
+
+- `notionUrl`·`gitPath`는 둘 다 선택이다. 어느 한쪽만 오거나 둘 다 없어도 유효한 요청이다 — 그 조합에서 `syncStatus`를 파생시키는 것이 이 엔드포인트의 존재 이유다(DES-003 §4-4).
+
+**응답 `200`** — `Artifact`. **`code` UNIQUE 기준 upsert**다.
+
+| `code` 존재 여부 | 동작 |
+|:---:|------|
+| 신규 | `status='draft'`로 삽입 |
+| 기존 | `stageId`·`title`·`updatedAt`은 갱신. `notionUrl`·`gitPath`는 **요청에 있을 때만** 갱신하고, 생략하면 기존 값을 유지한다(v2.8 · R2-03) |
+
+> **`status`는 이 엔드포인트가 되돌리지 않는다.** upsert의 `SET` 절에 `status`가 없어 기존 값이 그대로 유지된다(`artifact.repository.ts:139` 주석 근거) — 산출물의 `draft → review → approved` 전이는 승인 흐름이 별도로 관리하는 값이라, 재등록 한 번에 `approved`가 `draft`로 되돌아가면 안 된다.
+> **생략한 `notionUrl`·`gitPath`는 지워지지 않는다** (v2.8 · 대표 결정 R2-03 A안). upsert의 `SET` 절이 `COALESCE(excluded.notion_url, notion_url)` 형태라, 한쪽만 지정해 갱신해도 반대쪽이 보존된다. v2.6~v2.7 사양은 무조건 덮어쓰기여서, `--git-path`만 주고 재등록하면 `notion_url`이 NULL이 되어 `syncStatus`가 `synced → git_only`로 **조용히 퇴행**했다 — FR-031이 막으려던 바로 그 오판(2026-09-01 "analyze 건너뜀")을 기능 자체가 만들어내는 결함이었다. **트레이드오프**: 한 번 등록한 URL을 이 엔드포인트로는 지울 수 없다(대표 승인 시 인지).
+> **`syncStatus`는 이 엔드포인트도 저장하지 않는다.** 응답의 `syncStatus`는 `GET /api/artifacts`와 동일하게 `notionUrl`·`gitPath` 유무에서 파생한다(DES-003 §4-4 4분기 표). 이 원칙은 어떤 엔드포인트도 깨지 않는다.
+
+| 검증 | 실패 시 |
+|------|--------|
+| `code`·`title`·`stageId` 누락 | `400 VALIDATION_ERROR` |
+| `stageId`가 존재하지 않음 | `404 STAGE_NOT_FOUND` |
+
+> **호출자 (Phase 1)**: 대표가 `cm artifacts add --skill <skill> ...`(DES-006 v3.5 SCR-CH15)로 직접 등록한다. Agent가 산출물 생성 시 자동 등록하는 경로는 Phase 1 범위 밖이다 — Agent 하네스 자동 연동은 Phase 2 이후다.
 
 ### `GET /api/approvals`
 
@@ -678,6 +736,7 @@ const resolveApprovalSchema = {
 | `POST /api/conversations/:id/messages` | `CONVERSATION_NOT_FOUND`, **`CONVERSATION_ARCHIVED`** |
 | `GET /api/conversations/search` | — |
 | `GET /api/conversations/:id/export` | `CONVERSATION_NOT_FOUND` |
+| `PATCH /api/conversations/:id/read` | `CONVERSATION_NOT_FOUND` |
 | `GET /api/phases/current` | `NOT_FOUND` (진행 중 Phase 없음) |
 | `POST /api/phases` | — (`number` 중복은 `VALIDATION_ERROR`) |
 | `POST /api/approvals` | `CONVERSATION_NOT_FOUND`, **`CONVERSATION_ARCHIVED`**, `STAGE_NOT_FOUND` |
@@ -685,6 +744,7 @@ const resolveApprovalSchema = {
 | `POST /api/stages/:id/complete` | `STAGE_NOT_FOUND`, `INVALID_TRANSITION` |
 | `GET /api/artifacts` | — |
 | `GET /api/artifacts/:id/content` | `NOT_FOUND` |
+| `POST /api/artifacts` | `STAGE_NOT_FOUND` |
 | `GET /api/approvals` | — |
 | `GET /api/approvals/:id` | `APPROVAL_NOT_FOUND` |
 | `POST /api/approvals/:id/resolve` | `APPROVAL_NOT_FOUND`, **`APPROVAL_ALREADY_RESOLVED`**, **`APPROVAL_REASON_REQUIRED`**, **`GATE_AUTO_ADVANCE_FORBIDDEN`** |
@@ -721,7 +781,10 @@ Phase 2~3 확장 후보(FR-013 `worktrees`)는 v1.1 기재를 유지한다.
 | ~~DES-004 타입 추가 정의~~ | ✅ **반영 완료 (2026-09-01)** — DES-004 v2에 대화·승인·진행 타입 27종 추가. §6 도출 규칙의 입력이 확보되었다 | 보통 | 완료 |
 | ~~DES-009 에러 코드 편입~~ | ✅ **반영 완료 (2026-09-01)** — DES-009 v3 §대화·승인·진행 에러 코드 | 낮음 | 완료 |
 | ~~타임아웃 스케줄러 배치 위치~~ | ✅ **확정 완료 (2026-09-01)** — DES-001 v3 **ADR-012**: Fastify 프로세스 내부 타이머. SQLite 단일 쓰기자 전제와 충돌하는 별도 워커안 기각 | 보통 | 완료 |
-| **JSON Schema 전건 작성** | §6은 규칙 + 예시 2건이다. 34종 전건 스키마는 develop에서 DES-004 타입으로부터 생성하고 결과를 역반영한다 | 낮음 | develop |
+| **JSON Schema 전건 작성** | §6은 규칙 + 예시 2건이다. 36종 전건 스키마는 develop에서 DES-004 타입으로부터 생성하고 결과를 역반영한다 | 낮음 | develop |
+| ~~읽음 처리 경로 부재 (FIND-02)~~ | ✅ **반영 완료 (2026-09-03)** — `PATCH /api/conversations/:id/read` 신설(대표 결정 D-2 A안). `markRead()` 시그니처는 있었으나 호출 라우트가 없어 `unreadCount`가 줄지 않는 상태였다 | 보통 | 완료 |
+| ~~산출물 등록 경로 부재 (REV-M-06)~~ | ✅ **반영 완료 (2026-09-03)** — `POST /api/artifacts` 신설(대표 결정 D-3). `artifacts` 테이블에 행을 만드는 경로가 없어 FR-031이 도달 불가능한 상태였다 | 높음 | 완료 |
+| ~~`POST /api/approvals` 요청 예시 `requestedBy` 누락 (NEW-03)~~ | ✅ **정정 완료 (2026-09-03)** — §5 요청 예시가 스키마 필수 필드 `requestedBy`를 빠뜨려 문서대로 호출하면 400이 났다. 예시 정정 + 전 요청 예시를 `src/backend/schemas/**`와 전건 대조(그 외 결함 없음 확인) | 보통 | 완료 |
 
 ---
 
@@ -736,3 +799,7 @@ Phase 2~3 확장 후보(FR-013 `worktrees`)는 v1.1 기재를 유지한다.
 | **v2.1** | 2026-09-02 | **교차 검증 반영 (승인 R-01·R-03·R-04·R-07).** Phase 1 엔드포인트 **31 → 33** (+6.5%, §5 범위 트리거 미발동).<br>**`POST /api/phases` 신규** — Phase + 7단계 동시 생성. **§5-1 부트스트랩 신설** — 서버 `ready` 훅에서 CH-MAIN·Phase 1·7단계를 멱등 시드. 이 경로가 없어 `cm chat main`·`cm progress`·`cm stage start`가 빈 DB에서 전부 실패하는 상태였다(R-01).<br>**`POST /api/approvals` 신규** — 승인 건 직접 상정. DES-014 EVT-PH-5가 이미 호출하고 있었으나 API 목록에 없었다(R-07). CLI 화면은 Phase 1에 추가하지 않는다(32화면 유지).<br>**`resolve` 부수 효과 정정** — 승인이 `stages`를 직접 전이시키던 것을 제거했다. DES-007 v2 §7-1의 "`stages/:id/start`에서만 전이"와 충돌해 3단 게이트 검증 우회 경로가 되었다. 반려도 단계를 되돌리지 않는다(R-03).<br>**`DELETE /api/agents/:id`에 pending 승인 자동 마감 추가** — `resolution='system:agent_deleted'`. 없으면 승인함에 영구 잔류했다(R-04) |
 | — | 2026-09-02 | (문서 내 언급 대비 변경 이력 행 누락) `details` 선택 필드 추가(v2.2, §6-2) · `unreadCount` 파생 근거 명시(v2.3, §4, DEV-D-05). 두 건 모두 엔드포인트 개수에는 영향 없음 |
 | **v2.4** | 2026-09-02 | **단계 완료 경로 신설 (대표 결정 A안) — 플로우 단절 보완.** `POST /api/stages/:id/complete` 신규, Phase 1 엔드포인트 **33 → 34**(+3%, §5 범위 변경 트리거 미발동 — 테이블 증감 없음·Must 스토리 증감 없음·Layer 추가 없음).<br>Layer 2-8 개발 중 발견 — DES-007 §7 단계 상태 머신은 `pending → in_progress → completed` 선형인데, `completed`로 만드는 경로가 이 문서·DES-006 CLI 명세 어디에도 없어 `start`의 가드 1("직전 단계가 `completed`인가")을 영원히 통과할 수 없었다. R-01(부트스트랩 주체 부재)과 같은 성격의 결함이며 2026-09-02 교차 검증에서 놓친 건이다.<br>**선행 조건 없음** — 산출물 개수·승인 상태를 검사하지 않는다. `start`의 3단 게이트 검증 외에 두 번째 강제 지점을 만들지 않기 위해서다(R-03 취지 보존). `phases.current_stage`는 이 엔드포인트가 바꾸지 않는다 — 다음 `start`가 갱신한다. §7-2 에러 매핑에 `STAGE_NOT_FOUND`·`INVALID_TRANSITION` 2종 추가 |
+| **v2.5** | 2026-09-03 | **읽음 처리 경로 신설 (대표 결정 D-2 A안) — FIND-02 해소.** `PATCH /api/conversations/:id/read` 신규, Phase 1 엔드포인트 **34 → 35**(+3%, §5 범위 변경 트리거 미발동). test 스킬 9단계 리뷰에서 `ConversationService.markRead()`를 호출하는 HTTP 라우트가 없어 `last_read_at`이 갱신되지 않고 `unreadCount`가 영원히 줄지 않음이 런타임으로 재현 확정됐다. 기각된 B안(`GET .../messages` 부수효과 markRead)은 조회에 쓰기가 섞여 채택하지 않는다. `archived`·`readonly` 채널에도 허용(발화가 아닌 열람 기록). §7-2 에러 매핑에 `CONVERSATION_NOT_FOUND` 매핑 추가 |
+| **v2.6** | 2026-09-03 | **산출물 등록 경로 신설 (대표 결정 D-3) — REV-M-06 해소.** `POST /api/artifacts` 신규, Phase 1 엔드포인트 **35 → 36**(+3%, §5 범위 변경 트리거 미발동). `ArtifactService.upsert()`는 구현되어 있었으나 호출자가 0건이라 `artifacts`가 영구히 빈 테이블이었고, PLN-001 FR-031 수용 기준 2건이 전부 "조회 시 표시"뿐이라 등록 자체가 어느 설계 문서에도 규정된 적이 없었다(코드 결함이 아니라 설계 공백). `code` UNIQUE 기준 upsert, **`status`는 되돌리지 않는다**(`artifact.repository.ts:139`), `syncStatus`는 계속 파생값(DES-003 §4-4)이다. §7-2 에러 매핑에 `STAGE_NOT_FOUND` 매핑 추가 |
+| **v2.7** | 2026-09-03 | **`POST /api/approvals` 요청 예시 결함 정정 (NEW-03, test 스킬 발견) — 문서 결함.** §5 요청 예시에 스키마 필수 필드 `requestedBy`(`approval.schema.ts:45`)가 빠져 있어 **문서대로 호출하면 400이 났다.** 예시에 `"requestedBy": "main"` 추가 + 필수 각주 신설. 겸해 DES-002 전 요청 예시를 `src/backend/schemas/**`(common·approval·phase·artifact) 4개 파일과 전건 대조 — 그 외 결함 없음(`POST /api/phases`·`POST /api/wip-waivers`·`POST /api/artifacts`·`POST /api/approvals/:id/resolve`·§6-3/6-4 스키마 예시 전건 스키마와 일치 확인). 엔드포인트 수·동작 변경 없음(예시 정정만) |
+| **v2.8** | 2026-09-03 | **`POST /api/artifacts` upsert 갱신 규칙 정정 (대표 결정 R2-03 A안) — 사양 결함 해소.** v2.6~v2.7 사양은 `notionUrl`·`gitPath`를 **무조건 덮어쓰도록** 규정했다. 그 결과 `cm artifacts add --code DES-001 --title T --git-path p`처럼 한쪽만 지정해 기존 `synced` 행을 갱신하면 `notion_url`이 NULL이 되어 `syncStatus`가 **`synced → git_only`로 조용히 퇴행**했다 — FR-031이 막으려던 바로 그 오판(2026-09-01 "analyze 건너뜀"은 `notion_only`를 `missing`으로 오판한 사고였다)을 기능 자체가 만들어내는 구조였다. **`COALESCE(excluded.<col>, <col>)` 적용** — 요청에 있을 때만 갱신하고 생략하면 기존 값을 유지한다. `stageId`·`title`·`updatedAt`은 필수 입력이라 그대로 덮어쓰고, `status`는 종전대로 `SET` 절 밖이다(승인 이력 보호). **트레이드오프**: 한 번 등록한 URL을 이 엔드포인트로는 지울 수 없다 — 대표가 인지하고 승인했다(드문 조작). 실기동 확인: `--notion-url` 생략 재등록 후에도 `notionUrl` 보존·`syncStatus: synced` 유지(구현 정합 확인: 커밋 `b15a835`) |
