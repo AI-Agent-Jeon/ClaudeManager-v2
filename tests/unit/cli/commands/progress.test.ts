@@ -271,6 +271,128 @@ describe('registerProgressCommand — cm progress', () => {
     expect(getExitCode()).toBe(1);
     expect(errors.join('\n')).toContain('진행 중인 Phase가 없습니다');
   });
+
+  it('서버 unreachable이면 exit 1', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000')),
+    });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['progress'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('서버');
+  });
+
+  it('401이면 exit 1 (unauthenticated)', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockRejectedValue(new ApiRequestError(401, ErrorCode.UNAUTHORIZED, '인증 필요')),
+    });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['progress'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('인증이 필요합니다');
+  });
+
+  it('plan 단계가 착수됐으면 경과일수를, 아직 완료되지 않은 단계는 시작~완료 기간을 "~"만 표시한다', async () => {
+    const data = basePhaseCurrent({
+      stages: SKILLS.map((s) =>
+        makeStage(
+          s,
+          s === 'plan' ? { status: 'in_progress', startedAt: '2026-08-30T00:00:00.000Z' } : {},
+        ),
+      ),
+    });
+    const client = fakeClient({ get: vi.fn().mockResolvedValue({ data }) });
+    const { program, logs, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['progress'], { from: 'user' });
+
+    const out = logs.join('\n');
+    expect(getExitCode()).toBe(0);
+    expect(out).toContain('일차'); // now()가 buildTestProgram에서 2026-09-02로 고정된다
+  });
+
+  it('cm progress --waive "<사유>" — 성공', async () => {
+    const data = basePhaseCurrent();
+    const get = vi.fn().mockResolvedValue({ data });
+    const post = vi.fn().mockResolvedValue({ data: null });
+    const client = fakeClient({ get, post });
+    const { program, logs, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['progress', '--waive', '병행 필요'], { from: 'user' });
+
+    expect(getExitCode()).toBe(0);
+    const out = logs.join('\n');
+    expect(out).toContain('WIP 위반 면제 등록');
+    expect(out).toContain('병행 필요');
+  });
+
+  it('cm progress --waive " " — 사유 공백이면 exit 1', async () => {
+    const client = fakeClient();
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['progress', '--waive', '   '], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('사유가 필요합니다');
+  });
+
+  it('cm progress --waive "<사유>" — 진행 중인 Phase가 없으면 exit 1', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockRejectedValue(new ApiRequestError(404, ErrorCode.NOT_FOUND, '없음')),
+    });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['progress', '--waive', '사유'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('진행 중인 Phase가 없습니다');
+  });
+
+  it('cm progress --waive "<사유>" — 서버 검증 실패면 메시지를 그대로 보여준다', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi
+      .fn()
+      .mockRejectedValue(
+        new ApiRequestError(400, ErrorCode.VALIDATION_ERROR, 'reason은 빈 문자열일 수 없습니다'),
+      );
+    const client = fakeClient({ get, post });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['progress', '--waive', '사유'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('reason은 빈 문자열일 수 없습니다');
+  });
+
+  it('cm progress --waive "<사유>" — 서버 unreachable', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000'));
+    const client = fakeClient({ get, post });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['progress', '--waive', '사유'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('서버');
+  });
+
+  it('cm progress --waive "<사유>" — 401이면 unauthenticated', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi
+      .fn()
+      .mockRejectedValue(new ApiRequestError(401, ErrorCode.UNAUTHORIZED, '인증 필요'));
+    const client = fakeClient({ get, post });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['progress', '--waive', '사유'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('인증이 필요합니다');
+  });
 });
 
 // ─────────────────────────────────────────────
@@ -469,6 +591,34 @@ describe('runStageStart', () => {
     const result = await runStageStart({ client, skill: 'analyze' });
     expect(result).toEqual({ ok: false, reason: 'no_phase' });
   });
+
+  it('서버 unreachable이면 server_unreachable', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000'));
+    const client = fakeClient({ get, post });
+
+    const result = await runStageStart({ client, skill: 'analyze' });
+
+    // mapStageStartError는 err(ServerUnreachableError)가 아니라 `client.baseUrl`을
+    // 싣는다 — fakeClient의 기본값('.../api')과 같다.
+    expect(result).toEqual({
+      ok: false,
+      reason: 'server_unreachable',
+      serverUrl: 'http://127.0.0.1:3000/api',
+    });
+  });
+
+  it('401이면 unauthenticated', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi
+      .fn()
+      .mockRejectedValue(new ApiRequestError(401, ErrorCode.UNAUTHORIZED, '인증 필요'));
+    const client = fakeClient({ get, post });
+
+    const result = await runStageStart({ client, skill: 'analyze' });
+
+    expect(result).toEqual({ ok: false, reason: 'unauthenticated' });
+  });
 });
 
 // ─────────────────────────────────────────────
@@ -593,6 +743,80 @@ describe('registerProgressCommand — cm stage start 출력', () => {
     expect(out).toContain('진행 중 단계: design');
     expect(out).toContain('cm progress --waive');
   });
+
+  it('성공 — 첫 단계(plan)는 "없음 (첫 단계)"이고, 게이트가 이미 통과됐으면 승인 ID를 보여준다', async () => {
+    const before = withStage(basePhaseCurrent(), 'plan', {
+      gate: { required: true, approvalId: 'apv12345-0000-0000-0000-000000000000', passed: true },
+    });
+    const after: StageSummary = {
+      ...makeStage('plan'),
+      status: 'in_progress',
+      startedAt: '2026-09-01T10:00:00.000Z',
+    };
+    const get = vi.fn().mockResolvedValue({ data: before });
+    const post = vi.fn().mockResolvedValue({ data: after });
+    const client = fakeClient({ get, post });
+    const { program, logs, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['stage', 'start', 'plan'], { from: 'user' });
+
+    const out = logs.join('\n');
+    expect(getExitCode()).toBe(0);
+    expect(out).toContain('없음 (첫 단계)');
+    expect(out).toContain('필요 · 승인 apv12345');
+  });
+
+  it('진행 중인 Phase가 없으면 exit 1', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockRejectedValue(new ApiRequestError(404, ErrorCode.NOT_FOUND, '없음')),
+    });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['stage', 'start', 'analyze'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('진행 중인 Phase가 없습니다');
+  });
+
+  it('STAGE_NOT_FOUND — exit 1', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi
+      .fn()
+      .mockRejectedValue(new ApiRequestError(404, ErrorCode.STAGE_NOT_FOUND, '없음'));
+    const client = fakeClient({ get, post });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['stage', 'start', 'analyze'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('찾을 수 없습니다');
+  });
+
+  it('서버 unreachable — exit 1', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000'));
+    const client = fakeClient({ get, post });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['stage', 'start', 'analyze'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('서버');
+  });
+
+  it('401 — unauthenticated', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi
+      .fn()
+      .mockRejectedValue(new ApiRequestError(401, ErrorCode.UNAUTHORIZED, '인증 필요'));
+    const client = fakeClient({ get, post });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['stage', 'start', 'analyze'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('인증이 필요합니다');
+  });
 });
 
 // ─────────────────────────────────────────────
@@ -653,6 +877,145 @@ describe('runStageComplete', () => {
     const result = await runStageComplete({ client, skill: 'foo' });
     expect(result).toEqual({ ok: false, reason: 'invalid_skill', skill: 'foo' });
     expect(get).not.toHaveBeenCalled();
+  });
+
+  it('서버 unreachable이면 server_unreachable', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000'));
+    const client = fakeClient({ get, post });
+
+    const result = await runStageComplete({ client, skill: 'analyze' });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'server_unreachable',
+      serverUrl: 'http://127.0.0.1:3000/api',
+    });
+  });
+
+  it('401이면 unauthenticated', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi
+      .fn()
+      .mockRejectedValue(new ApiRequestError(401, ErrorCode.UNAUTHORIZED, '인증 필요'));
+    const client = fakeClient({ get, post });
+
+    const result = await runStageComplete({ client, skill: 'analyze' });
+
+    expect(result).toEqual({ ok: false, reason: 'unauthenticated' });
+  });
+});
+
+// ─────────────────────────────────────────────
+// cm stage complete — 출력
+// ─────────────────────────────────────────────
+
+describe('registerProgressCommand — cm stage complete 출력', () => {
+  function buildTestProgram(client: CliApiClient) {
+    const logs: string[] = [];
+    const errors: string[] = [];
+    let exitCode: number | undefined;
+    const program = createProgram();
+    program.exitOverride();
+    registerProgressCommand(program, {
+      createClient: () => client,
+      homeDir,
+      log: (msg: string) => logs.push(msg),
+      errorLog: (msg: string) => errors.push(msg),
+      setExitCode: (code: number) => {
+        exitCode = code;
+      },
+    });
+    return { program, logs, errors, getExitCode: () => exitCode };
+  }
+
+  it('성공 — 완료 결과와 다음 단계 안내를 출력한다 (EVT-CH14-1)', async () => {
+    const before = withStage(basePhaseCurrent(), 'analyze', { status: 'in_progress' });
+    const after: StageSummary = {
+      ...makeStage('analyze'),
+      status: 'completed',
+      completedAt: '2026-09-01T12:00:00.000Z',
+    };
+    const get = vi.fn().mockResolvedValue({ data: before });
+    const post = vi.fn().mockResolvedValue({ data: after });
+    const client = fakeClient({ get, post });
+    const { program, logs, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['stage', 'complete', 'analyze'], { from: 'user' });
+
+    const out = logs.join('\n');
+    expect(getExitCode()).toBe(0);
+    expect(out).toContain('단계 완료');
+    expect(out).toContain('in_progress → completed');
+    expect(out).toContain('현재 단계는 바뀌지 않습니다');
+  });
+
+  it('INVALID_TRANSITION — 현재 상태를 안내한다', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi
+      .fn()
+      .mockRejectedValue(new ApiRequestError(422, ErrorCode.INVALID_TRANSITION, '진행 중 아님'));
+    const client = fakeClient({ get, post });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['stage', 'complete', 'analyze'], { from: 'user' });
+
+    const out = errors.join('\n');
+    expect(getExitCode()).toBe(1);
+    expect(out).toContain('진행 중 단계만 완료할 수 있습니다');
+    expect(out).toContain('대기');
+  });
+
+  it('진행 중인 Phase가 없으면 exit 1', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockRejectedValue(new ApiRequestError(404, ErrorCode.NOT_FOUND, '없음')),
+    });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['stage', 'complete', 'analyze'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('진행 중인 Phase가 없습니다');
+  });
+
+  it('STAGE_NOT_FOUND — exit 1', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi
+      .fn()
+      .mockRejectedValue(new ApiRequestError(404, ErrorCode.STAGE_NOT_FOUND, '없음'));
+    const client = fakeClient({ get, post });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['stage', 'complete', 'analyze'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('찾을 수 없습니다');
+  });
+
+  it('서버 unreachable — exit 1', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000'));
+    const client = fakeClient({ get, post });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['stage', 'complete', 'analyze'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('서버');
+  });
+
+  it('401 — unauthenticated', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi
+      .fn()
+      .mockRejectedValue(new ApiRequestError(401, ErrorCode.UNAUTHORIZED, '인증 필요'));
+    const client = fakeClient({ get, post });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['stage', 'complete', 'analyze'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('인증이 필요합니다');
   });
 });
 
@@ -794,6 +1157,14 @@ describe('runArtifacts', () => {
       reason: 'server_unreachable',
       serverUrl: 'http://127.0.0.1:3000/api',
     });
+  });
+
+  it('401이면 unauthenticated', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockRejectedValue(new ApiRequestError(401, ErrorCode.UNAUTHORIZED, '인증 필요')),
+    });
+    const result = await runArtifacts({ client });
+    expect(result).toEqual({ ok: false, reason: 'unauthenticated' });
   });
 });
 
@@ -979,6 +1350,70 @@ describe('registerProgressCommand — cm artifacts add 출력', () => {
       program.parseAsync(['artifacts', 'add', '--skill', 'plan'], { from: 'user' }),
     ).rejects.toThrow();
   });
+
+  it('진행 중인 Phase가 없으면 exit 1', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockRejectedValue(new ApiRequestError(404, ErrorCode.NOT_FOUND, '없음')),
+    });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(
+      ['artifacts', 'add', '--skill', 'plan', '--code', 'X', '--title', 'Y'],
+      { from: 'user' },
+    );
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('진행 중인 Phase가 없습니다');
+  });
+
+  it('VALIDATION_ERROR면 메시지를 그대로 보여준다', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi
+      .fn()
+      .mockRejectedValue(new ApiRequestError(400, ErrorCode.VALIDATION_ERROR, 'code가 중복됩니다'));
+    const client = fakeClient({ get, post });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(
+      ['artifacts', 'add', '--skill', 'plan', '--code', 'X', '--title', 'Y'],
+      { from: 'user' },
+    );
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('code가 중복됩니다');
+  });
+
+  it('서버 unreachable — exit 1', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000'));
+    const client = fakeClient({ get, post });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(
+      ['artifacts', 'add', '--skill', 'plan', '--code', 'X', '--title', 'Y'],
+      { from: 'user' },
+    );
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('서버');
+  });
+
+  it('401 — unauthenticated', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi
+      .fn()
+      .mockRejectedValue(new ApiRequestError(401, ErrorCode.UNAUTHORIZED, '인증 필요'));
+    const client = fakeClient({ get, post });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(
+      ['artifacts', 'add', '--skill', 'plan', '--code', 'X', '--title', 'Y'],
+      { from: 'user' },
+    );
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('인증이 필요합니다');
+  });
 });
 
 describe('registerProgressCommand — cm artifacts 출력', () => {
@@ -1023,6 +1458,40 @@ describe('registerProgressCommand — cm artifacts 출력', () => {
 
     expect(getExitCode()).toBe(0);
     expect(logs.join('\n')).toContain('산출물이 없습니다');
+  });
+
+  it('알 수 없는 동기화 상태 — exit 1', async () => {
+    const client = fakeClient();
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['artifacts', '--sync', 'nonsense'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('알 수 없는 동기화 상태입니다');
+  });
+
+  it('서버 unreachable — exit 1', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000')),
+    });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['artifacts'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('서버');
+  });
+
+  it('401 — unauthenticated', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockRejectedValue(new ApiRequestError(401, ErrorCode.UNAUTHORIZED, '인증 필요')),
+    });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['artifacts'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('인증이 필요합니다');
   });
 });
 

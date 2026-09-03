@@ -326,7 +326,7 @@ describe('runDecide', () => {
     expect(post).not.toHaveBeenCalled();
   });
 
-  it('승인 성공 — Agent 재개 + APV-GATE면 다음 단계명을 돌려준다', async () => {
+  it('승인 성공 — 요청자(main)가 Agent가 아니면 requesterIsAgent=false, APV-GATE면 다음 단계명을 돌려준다 (NEW-02)', async () => {
     const resolved = detailOf(APV_GATE_PENDING, {
       status: 'approved',
       resolution: 'A',
@@ -335,6 +335,10 @@ describe('runDecide', () => {
     const get = routed((path) => {
       if (path === '/approvals') return { data: [APV_GATE_PENDING] };
       if (path === '/phases/current') return { data: PHASE_CURRENT };
+      // APV_GATE_PENDING.requestedBy === 'main' — Agent 행이 없다 (DEV-D-06)
+      if (path === '/agents/main') {
+        throw new ApiRequestError(404, ErrorCode.AGENT_NOT_FOUND, 'Agent를 찾을 수 없습니다');
+      }
       throw new Error(`unexpected ${path}`);
     });
     const post = routed((path, body) => {
@@ -357,6 +361,35 @@ describe('runDecide', () => {
     if (!result.ok) throw new Error('unreachable');
     expect(result.approval.status).toBe('approved');
     expect(result.nextStageSkill).toBe('analyze');
+    expect(result.requesterIsAgent).toBe(false);
+  });
+
+  it('승인 성공 — 요청자가 실재 Agent면 requesterIsAgent=true', async () => {
+    const resolved = detailOf(APV_CHOICE_PENDING, {
+      status: 'approved',
+      resolution: 'A',
+      resolvedAt: '2026-09-01T02:00:00.000Z',
+    });
+    const get = routed((path) => {
+      if (path === '/approvals') return { data: [APV_CHOICE_PENDING] };
+      if (path === `/agents/${APV_CHOICE_PENDING.requestedBy}`) {
+        return { data: { id: APV_CHOICE_PENDING.requestedBy } };
+      }
+      throw new Error(`unexpected ${path}`);
+    });
+    const post = vi.fn().mockResolvedValue({ data: resolved });
+    const client = fakeClient({ get: get as CliApiClient['get'], post });
+
+    const result = await runDecide({
+      client,
+      idOrPrefix: APV_CHOICE_PENDING.id,
+      decision: 'approve',
+      resolution: 'A',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.requesterIsAgent).toBe(true);
   });
 
   it('반려 성공 — resolution·reason을 그대로 싣는다', async () => {
@@ -641,7 +674,7 @@ describe('registerApprovalCommand — 출력·종료 코드', () => {
     expect(get).not.toHaveBeenCalled();
   });
 
-  it('cm decide <id> --approve — 승인 완료 + Agent 재개 + 다음 단계 안내', async () => {
+  it('cm decide <id> --approve — 승인 완료 + 다음 단계 안내 (요청자 main은 "재개" 문구를 생략한다, NEW-02)', async () => {
     const resolved = detailOf(APV_GATE_PENDING, {
       status: 'approved',
       resolution: 'A',
@@ -650,6 +683,11 @@ describe('registerApprovalCommand — 출력·종료 코드', () => {
     const get = routed((path) => {
       if (path === '/approvals') return { data: [APV_GATE_PENDING] };
       if (path === '/phases/current') return { data: PHASE_CURRENT };
+      // APV_GATE_PENDING.requestedBy === 'main' — Agent 행이 없다 (DEV-D-06).
+      // 재개될 Agent가 애초에 없으므로 "재개됩니다" 문구를 내보내면 안 된다.
+      if (path === '/agents/main') {
+        throw new ApiRequestError(404, ErrorCode.AGENT_NOT_FOUND, 'Agent를 찾을 수 없습니다');
+      }
       throw new Error(`unexpected ${path}`);
     });
     const post = vi.fn().mockResolvedValue({ data: resolved });
@@ -661,9 +699,36 @@ describe('registerApprovalCommand — 출력·종료 코드', () => {
     const out = logs.join('\n');
     expect(getExitCode()).toBe(0);
     expect(out).toContain('승인 완료');
-    expect(out).toContain('재개');
+    expect(out).not.toContain('재개');
     expect(out).toContain('다음 단계: analyze');
     expect(out).toContain('cm stage start analyze');
+  });
+
+  it('cm decide <id> --approve — 요청자가 실재 Agent면 "재개" 문구를 출력한다 (NEW-02 대비 비교)', async () => {
+    const resolved = detailOf(APV_CHOICE_PENDING, {
+      status: 'approved',
+      resolution: 'A',
+      resolvedAt: '2026-09-01T02:00:00.000Z',
+    });
+    const get = routed((path) => {
+      if (path === '/approvals') return { data: [APV_CHOICE_PENDING] };
+      if (path === `/agents/${APV_CHOICE_PENDING.requestedBy}`) {
+        return { data: { id: APV_CHOICE_PENDING.requestedBy } };
+      }
+      throw new Error(`unexpected ${path}`);
+    });
+    const post = vi.fn().mockResolvedValue({ data: resolved });
+    const client = fakeClient({ get: get as CliApiClient['get'], post });
+    const { program, logs, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['decide', APV_CHOICE_PENDING.id, '--approve', '--resolution', 'A'], {
+      from: 'user',
+    });
+
+    const out = logs.join('\n');
+    expect(getExitCode()).toBe(0);
+    expect(out).toContain('승인 완료');
+    expect(out).toContain('재개');
   });
 
   it('cm decide <id> --reject --reason — 반려 완료 + "대기 상태를 유지"', async () => {

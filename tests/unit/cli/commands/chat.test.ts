@@ -336,6 +336,46 @@ describe('runChatRepl', () => {
     expect(post).toHaveBeenCalledTimes(1); // 아카이브 감지 후 루프를 더 돌지 않는다
     expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('종료된 채널'));
   });
+
+  it('서버 unreachable이면 에러를 알리고 세션은 계속된다 (아카이브가 아니므로 break하지 않는다)', async () => {
+    const post = vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000'));
+    const client = fakeClient({ post });
+    const lines = ['첫 메시지', '/exit'];
+    const readLine = vi.fn(async (): Promise<string | null> => lines.shift() ?? null);
+    const errorLog = vi.fn();
+
+    const result = await runChatRepl({
+      client,
+      conversationId: 'c1',
+      readLine,
+      log: vi.fn(),
+      errorLog,
+    });
+
+    expect(result.sentCount).toBe(0);
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('서버'));
+  });
+
+  it('그 외 ApiRequestError는 "전송 실패"를 알리고 세션은 계속된다', async () => {
+    const post = vi
+      .fn()
+      .mockRejectedValue(new ApiRequestError(400, ErrorCode.VALIDATION_ERROR, '본문이 비었습니다'));
+    const client = fakeClient({ post });
+    const lines = ['빈 본문 아님', '/exit'];
+    const readLine = vi.fn(async (): Promise<string | null> => lines.shift() ?? null);
+    const errorLog = vi.fn();
+
+    const result = await runChatRepl({
+      client,
+      conversationId: 'c1',
+      readLine,
+      log: vi.fn(),
+      errorLog,
+    });
+
+    expect(result.sentCount).toBe(0);
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('전송 실패'));
+  });
 });
 
 describe('runChatSend', () => {
@@ -798,6 +838,334 @@ describe('registerChatCommand — 출력·종료 코드', () => {
 
     expect(getExitCode()).toBe(1);
     expect(errors.join('\n')).toContain('2자 이상');
+  });
+
+  it('cm chat search "<query>" — 결과가 있으면 스니펫과 검색어·건수를 출력한다', async () => {
+    const get = vi.fn().mockResolvedValue({
+      data: [
+        {
+          messageId: 'm1',
+          conversationId: CONV_MAIN.id,
+          conversationTitle: 'Main',
+          snippet: '<mark>승인</mark> 게이트를 먼저 만들자',
+          createdAt: '2026-09-01T00:00:00.000Z',
+        },
+      ],
+    });
+    const client = fakeClient({ get });
+    const { program, logs, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'search', '승인'], { from: 'user' });
+
+    expect(getExitCode()).toBe(0);
+    const out = logs.join('\n');
+    expect(out).toContain('검색 결과');
+    expect(out).toContain('검색어: 승인');
+    expect(out).toContain('총 1건');
+    expect(out).toContain('한국어 조사');
+  });
+
+  it('cm chat search "<query>" — 결과 0건이면 안내 + 조사 한계 경고', async () => {
+    const client = fakeClient({ get: vi.fn().mockResolvedValue({ data: [] }) });
+    const { program, logs, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'search', '없는말'], { from: 'user' });
+
+    expect(getExitCode()).toBe(0);
+    expect(logs.join('\n')).toContain('결과가 없습니다');
+  });
+
+  it('cm chat search "<query>" — 서버 unreachable', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000')),
+    });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'search', '검색어'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('서버');
+  });
+
+  it('cm chat list — 항목이 있으면 표 + 아카이브 dim + 필터를 출력한다', async () => {
+    const archived = {
+      ...CONV_AGENT,
+      status: 'archived',
+      id: 'c2222222-e5f6-7890-abcd-ef1234567890',
+    };
+    const get = vi.fn().mockResolvedValue({ data: [CONV_MAIN, archived] });
+    const client = fakeClient({ get });
+    const { program, logs, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'list', '--type', 'agent'], { from: 'user' });
+
+    expect(getExitCode()).toBe(0);
+    const out = logs.join('\n');
+    expect(out).toContain('대화 채널 목록');
+    expect(out).toContain('Main');
+    expect(out).toContain('(삭제됨)');
+    expect(out).toContain('총 2건');
+    expect(out).toContain('filtered by: agent');
+  });
+
+  it('cm chat send main "<본문>" — 종료된 채널이면 안내한다', async () => {
+    const get = vi.fn().mockResolvedValue({ data: [CONV_MAIN] });
+    const post = vi
+      .fn()
+      .mockRejectedValue(new ApiRequestError(409, ErrorCode.CONVERSATION_ARCHIVED, '종료된 채널'));
+    const client = fakeClient({ get, post });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'send', 'main', '안녕'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('종료된 채널에는 보낼 수 없습니다');
+  });
+
+  it('cm chat send <id> "<본문>" — 없는 Agent면 not_found', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockRejectedValue(new ApiRequestError(404, ErrorCode.AGENT_NOT_FOUND, '없음')),
+    });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'send', AGENT_DETAIL.id, '안녕'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('찾을 수 없습니다');
+  });
+
+  it('cm chat send <id> "<본문>" — Agent에 대화 채널이 없으면 conversation_not_found', async () => {
+    const get = routedGet((path) => {
+      if (path === `/agents/${AGENT_DETAIL.id}`)
+        return { data: { ...AGENT_DETAIL, conversationId: null } };
+      throw new Error(`unexpected ${path}`);
+    });
+    const client = fakeClient({ get });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'send', AGENT_DETAIL.id, '안녕'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('대화 채널을 찾을 수 없습니다');
+  });
+
+  it('cm chat send main "<본문>" — 서버 검증 실패(VALIDATION_ERROR)', async () => {
+    const get = vi.fn().mockResolvedValue({ data: [CONV_MAIN] });
+    const post = vi
+      .fn()
+      .mockRejectedValue(new ApiRequestError(400, ErrorCode.VALIDATION_ERROR, '본문이 비었습니다'));
+    const client = fakeClient({ get, post });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'send', 'main', '안녕'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('본문이 비었습니다');
+  });
+
+  it('cm chat send main "<본문>" — 조회 단계에서 서버 unreachable', async () => {
+    const get = vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000'));
+    const client = fakeClient({ get });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'send', 'main', '안녕'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('서버');
+  });
+
+  it('cm chat log <없는채널> — not_found', async () => {
+    const client = fakeClient({ get: vi.fn().mockResolvedValue({ data: [] }) });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'log', 'zzzzzzzz'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('찾을 수 없습니다');
+  });
+
+  it('cm chat log <id> --since <잘못된 날짜> — invalid_since', async () => {
+    const client = fakeClient();
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'log', CONV_MAIN.id, '--since', '이상한값'], {
+      from: 'user',
+    });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('--since 값이 올바른 날짜가 아닙니다');
+  });
+
+  it('cm chat log <id> — 메시지가 없으면 안내 문구', async () => {
+    const get = routedGet((path) => {
+      if (path.includes('status=active')) return { data: [CONV_MAIN] };
+      if (path.includes('status=')) return { data: [] };
+      return { data: [], cursor: { next: null, hasMore: false } };
+    });
+    const client = fakeClient({ get });
+    const { program, logs, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'log', CONV_MAIN.id], { from: 'user' });
+
+    expect(getExitCode()).toBe(0);
+    expect(logs.join('\n')).toContain('메시지가 없습니다');
+  });
+
+  it('cm chat log <id> — DECISION_REQUEST·AGENT_REPORT(구조화)를 전개해 보여준다', async () => {
+    const get = routedGet((path) => {
+      if (path.includes('status=active')) return { data: [CONV_MAIN] };
+      if (path.includes('status=')) return { data: [] };
+      return {
+        data: [
+          msg('m1', '설계서를 개정했습니다', '2026-09-01T00:00:00.000Z', {
+            msgType: 'MSG-04',
+            approvalId: 'ap111111-e5f6-7890-abcd-ef1234567890',
+          }),
+          msg('m2', '요약 대체됨', '2026-09-01T00:01:00.000Z', {
+            msgType: 'MSG-03',
+            structured: {
+              summary: '개발 완료',
+              workDone: 'API 구현',
+              artifacts: ['DEV-001'],
+              openIssues: '없음',
+            },
+          }),
+        ],
+        cursor: { next: null, hasMore: false },
+      };
+    });
+    const client = fakeClient({ get });
+    const { program, logs, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'log', CONV_MAIN.id], { from: 'user' });
+
+    expect(getExitCode()).toBe(0);
+    const out = logs.join('\n');
+    expect(out).toContain('승인ID:');
+    expect(out).toContain('cm decide');
+    expect(out).toContain('요약: 개발 완료');
+    expect(out).toContain('수행 내용: API 구현');
+    expect(out).toContain('산출물: DEV-001');
+  });
+
+  it('cm chat main — 구조화 보고·의사결정 요청 메시지를 접어서 보여준다', async () => {
+    const get = routedGet((path) => {
+      if (path.includes('type=main')) return { data: [CONV_MAIN] };
+      return {
+        data: [
+          msg('m1', '기한 만료로 자동 진행되었습니다', '2026-09-01T00:00:00.000Z', {
+            msgType: 'MSG-05',
+            senderRole: 'system',
+          }),
+          msg('m2', '승인해 주세요', '2026-09-01T00:01:00.000Z', {
+            msgType: 'MSG-04',
+            approvalId: 'ap111111-e5f6-7890-abcd-ef1234567890',
+          }),
+          msg('m3', '요약', '2026-09-01T00:02:00.000Z', {
+            msgType: 'MSG-03',
+            senderRole: 'main',
+            structured: {
+              summary: '개발 완료',
+              workDone: 'API 구현',
+              artifacts: [],
+              openIssues: '',
+            },
+          }),
+        ],
+        cursor: { next: null, hasMore: false },
+      };
+    });
+    const client = fakeClient({ get });
+    const { program, logs, errors, getExitCode } = buildTestProgram(client, {
+      readLines: ['/exit'],
+    });
+
+    await program.parseAsync(['chat', 'main'], { from: 'user' });
+
+    expect(getExitCode()).toBe(0);
+    const out = logs.join('\n');
+    expect(out).toContain('기한 만료로 자동 진행되었습니다');
+    expect(out).toContain('⚠ 의사결정 요청');
+    expect(out).toContain('승인ID:');
+    expect(out).toContain('▾ 수행 내용');
+    expect(errors.join('\n')).toBe('');
+  });
+
+  it('cm chat main — CH-MAIN을 찾을 수 없으면 안내한다', async () => {
+    const get = vi.fn().mockResolvedValue({ data: [] });
+    const client = fakeClient({ get });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'main'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('CH-MAIN 채널을 찾을 수 없습니다');
+  });
+
+  it('cm chat main — 서버 unreachable', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000')),
+    });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'main'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('서버');
+  });
+
+  it('cm chat agent <id> — 대기 사유가 있는 활성 채널은 REPL을 연다', async () => {
+    const waiting = {
+      ...AGENT_DETAIL,
+      status: 'waiting',
+      waitingReason: 'ceo_approval',
+    };
+    const get = routedGet((path) => {
+      if (path === `/agents/${AGENT_DETAIL.id}`) return { data: waiting };
+      return {
+        data: [msg('m1', '승인을 기다립니다', '2026-09-01T00:00:00.000Z')],
+        cursor: { next: null, hasMore: false },
+      };
+    });
+    const client = fakeClient({ get });
+    const { program, logs, getExitCode, closeSpy } = buildTestProgram(client, {
+      readLines: ['/exit'],
+    });
+
+    await program.parseAsync(['chat', 'agent', AGENT_DETAIL.id], { from: 'user' });
+
+    expect(getExitCode()).toBe(0);
+    const out = logs.join('\n');
+    expect(out).toContain('대표 승인 대기');
+    expect(out).toContain('세션 종료');
+    expect(closeSpy).toHaveBeenCalled();
+  });
+
+  it('cm chat log <id> --export <CWD 밖 경로> — escapes_cwd', async () => {
+    const get = routedGet((path) => {
+      if (path.includes('status=active')) return { data: [CONV_MAIN] };
+      return { data: [] };
+    });
+    const getText = vi.fn().mockResolvedValue('# Main');
+    const client = { ...fakeClient({ get }), getText };
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'log', CONV_MAIN.id, '--export', '../밖으로.md'], {
+      from: 'user',
+    });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('현재 디렉토리를 벗어납니다');
+  });
+
+  it('cm chat log <없는채널> --export — not_found', async () => {
+    const client = fakeClient({ get: vi.fn().mockResolvedValue({ data: [] }) });
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(['chat', 'log', 'zzzzzzzz', '--export'], { from: 'user' });
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('찾을 수 없습니다');
   });
 
   it('chat 하위에 main·agent·send·list·log·search가 등록된다', () => {
