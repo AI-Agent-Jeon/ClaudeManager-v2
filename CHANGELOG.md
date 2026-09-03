@@ -386,6 +386,20 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   회귀·상태 머신 가드(예: `waiting → paused` 건너뜀)·트랜잭션 롤백(캐스케이드 도중 실패 시 3계층
   전건 미반영)·`status_changes` 감사 로그를 `tests/unit/backend/routes/project-cascade.test.ts`로
   검증한다
+- **FIND-06 — Project 취소 캐스케이드가 CH-AGENT 채널을 readonly로 전환하지 않던 문제** — FIND-01과
+  같은 성격의 결함이다. `AgentService.updateStatus()`(PATCH `/api/agents/:id/status` 경로)는 Agent가
+  `completed`/`cancelled`로 전이하면 `conversationService.markReadonly(id)`로 CH-AGENT를 readonly로
+  전환하는데(DES-007 §8), `cascadeFromProjectSync()`(FIND-01에서 신설)는 이 호출을 하지 않아 같은
+  `agent.status = cancelled`인데 도달 경로(직접 PATCH vs Project 캐스케이드)에 따라 채널 상태가
+  갈렸다. `markReadonly()`가 `async`인데 `db.transaction()`은 동기 콜백만 지원해 트랜잭션 콜백
+  안에서 직접 호출할 수 없던 것이 원인이다. `ConversationService`에 `markReadonlySync()` 동기
+  코어를 추출하고(`createForAgentSync`와 같은 패턴), 기존 `markReadonly()`는 그것을 감싸는 얇은
+  래퍼로 교정해 `updateStatus()` 경로의 동작은 그대로 유지했다. `cascadeFromProjectSync()`가
+  캐스케이드 대상이 `cancelled`일 때만(§8이 규정하는 채널 전이 대상은 completed·cancelled뿐이고,
+  `paused`는 종료가 아니다) `markReadonlySync()`를 호출하도록 했다. 경로 동등성 회귀(캐스케이드
+  cancelled와 직접 PATCH cancelled의 채널 상태가 같은지)·과잉 적용 방어(`paused` 캐스케이드는
+  readonly로 만들지 않는지)·트랜잭션 롤백(채널 전이까지 함께 롤백되는지)을
+  `tests/unit/backend/routes/project-cascade.test.ts`에 이어 붙여 검증한다
 
 ### Security
 

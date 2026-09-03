@@ -82,6 +82,15 @@ function getStatus(table: 'projects' | 'agents' | 'tasks', id: string): string {
     .status;
 }
 
+/** FIND-06 — Agent의 CH-AGENT 채널 상태를 entity_id로 직접 조회한다 */
+function getChannelStatus(agentId: string): string {
+  return (
+    app.db
+      .prepare("SELECT status FROM conversations WHERE entity_id = ? AND channel_type = 'agent'")
+      .get(agentId) as { status: string }
+  ).status;
+}
+
 async function statusChangeCount(entityId: string, changedBy?: string): Promise<number> {
   const res = await app.inject({
     method: 'GET',
@@ -182,6 +191,131 @@ describe('PATCH /api/projects/:id/status — FIND-01 캐스케이드(paused) · 
     // 가드로 건너뛴 Agent는 전이되지 않으므로, 중첩 캐스케이드(Task)도 실행되지 않는다
     expect(getStatus('agents', waitingAgent)).toBe('waiting');
     expect(getStatus('tasks', waitingAgentTask)).toBe('ready');
+  });
+});
+
+describe('PATCH /api/projects/:id/status — FIND-06 채널 readonly 캐스케이드', () => {
+  it(
+    '경로 동등성: Project 취소 캐스케이드로 cancelled된 Agent의 채널이, ' +
+      '직접 PATCH로 cancelled한 Agent의 채널과 같은 상태(readonly)가 된다 (DES-007 §8)',
+    async () => {
+      // 경로 A — Project 취소 캐스케이드
+      const projectA = await createProject();
+      await app.inject({
+        method: 'PATCH',
+        url: `/api/projects/${projectA}/status`,
+        headers: authHeader(),
+        payload: { status: 'running' },
+      });
+      const cascadeAgent = await createAgent(projectA);
+      forceStatus('agents', cascadeAgent, 'running');
+
+      await app.inject({
+        method: 'PATCH',
+        url: `/api/projects/${projectA}/status`,
+        headers: authHeader(),
+        payload: { status: 'cancelled' },
+      });
+
+      // 경로 B — 직접 PATCH /api/agents/:id/status
+      const projectB = await createProject();
+      await app.inject({
+        method: 'PATCH',
+        url: `/api/projects/${projectB}/status`,
+        headers: authHeader(),
+        payload: { status: 'running' },
+      });
+      const directAgent = await createAgent(projectB);
+      forceStatus('agents', directAgent, 'running');
+
+      await app.inject({
+        method: 'PATCH',
+        url: `/api/agents/${directAgent}/status`,
+        headers: authHeader(),
+        payload: { status: 'cancelled' },
+      });
+
+      expect(getStatus('agents', cascadeAgent)).toBe('cancelled');
+      expect(getStatus('agents', directAgent)).toBe('cancelled');
+
+      // 수정 전에는 cascadeAgent의 채널만 'active'로 잔존했다(FIND-06)
+      expect(getChannelStatus(cascadeAgent)).toBe('readonly');
+      expect(getChannelStatus(directAgent)).toBe('readonly');
+      expect(getChannelStatus(cascadeAgent)).toBe(getChannelStatus(directAgent));
+    },
+  );
+
+  it('과잉 적용 방어: Project가 paused로 캐스케이드되면 Agent 채널은 readonly가 되지 않는다', async () => {
+    const projectId = await createProject();
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/${projectId}/status`,
+      headers: authHeader(),
+      payload: { status: 'running' },
+    });
+    const agentId = await createAgent(projectId);
+    forceStatus('agents', agentId, 'running');
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/${projectId}/status`,
+      headers: authHeader(),
+      payload: { status: 'paused' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(getStatus('agents', agentId)).toBe('paused');
+    // paused는 종료가 아니다 — DES-007 §8이 규정하는 채널 전이 대상은 completed·cancelled뿐이다
+    expect(getChannelStatus(agentId)).toBe('active');
+  });
+
+  it('트랜잭션 롤백 시 채널 상태도 함께 롤백된다', async () => {
+    const projectId = await createProject();
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/${projectId}/status`,
+      headers: authHeader(),
+      payload: { status: 'running' },
+    });
+
+    // agent1은 Task가 없어 cascadeToTasks가 즉시 끝나고 markReadonlySync까지
+    // 캐스케이드 루프 안에서 먼저 반영된다. agent2는 Task를 가져 그 갱신을
+    // 실패시킨다 — 두 Agent가 하나의 트랜잭션으로 묶여 있으므로, agent2의
+    // 실패로 agent1에서 이미 반영된 채널 전이까지 함께 롤백되는지 검증한다
+    // (같은 몽키패치 방식, FIND-01 atomicity 테스트와 동일).
+    const agent1 = await createAgent(projectId);
+    forceStatus('agents', agent1, 'running');
+    expect(getChannelStatus(agent1)).toBe('active');
+
+    const agent2 = await createAgent(projectId);
+    forceStatus('agents', agent2, 'running');
+    const task2 = await createTask(agent2);
+    forceStatus('tasks', task2, 'in_progress');
+
+    const original = app.db.prepare.bind(app.db);
+    // biome-ignore lint/suspicious/noExplicitAny: 테스트 전용 몽키패치
+    (app.db as any).prepare = (sql: string) => {
+      if (sql.includes('UPDATE tasks SET status')) {
+        throw new Error('Task 캐스케이드 실패 시뮬레이션');
+      }
+      return original(sql);
+    };
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/${projectId}/status`,
+      headers: authHeader(),
+      payload: { status: 'cancelled' },
+    });
+
+    // biome-ignore lint/suspicious/noExplicitAny: 테스트 전용 몽키패치 복원
+    (app.db as any).prepare = original;
+
+    expect(res.statusCode).toBe(500);
+    expect(getStatus('agents', agent1)).toBe('running');
+    expect(getStatus('agents', agent2)).toBe('running');
+    expect(getChannelStatus(agent1)).toBe('active');
+    expect(getChannelStatus(agent2)).toBe('active');
   });
 });
 

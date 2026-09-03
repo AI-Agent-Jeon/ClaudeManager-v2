@@ -349,6 +349,15 @@ export class AgentService {
    * `async`가 아니다 — better-sqlite3의 `db.transaction()`은 동기 콜백만
    * 지원한다. 여기 `await`를 쓰면 컴파일이 실패해 "트랜잭션 콜백 안에서
    * 안전하다"는 전제를 타입 체커가 강제한다(R-04·Layer 2-6과 같은 패턴).
+   *
+   * FIND-06 수정 — `updateStatus()`(PATCH 라우트 경로)는 Agent가
+   * completed/cancelled로 전이하면 `conversationService.markReadonly()`로
+   * CH-AGENT를 readonly로 전환한다(DES-007 §8). 이 캐스케이드 경로는 그
+   * 부수효과를 건너뛰어, 같은 `agent.status = cancelled`인데 도달 경로에
+   * 따라 채널 상태가 갈리는 결함이 있었다. 여기서도 `markReadonlySync()`를
+   * 호출해 두 경로의 결과를 동등하게 맞춘다. `paused`는 종료가 아니므로
+   * 대상에서 제외한다 — DES-007 §8이 규정하는 채널 전이는 completed·
+   * cancelled뿐이다.
    */
   cascadeFromProjectSync(
     projectId: string,
@@ -376,6 +385,12 @@ export class AgentService {
 
       // 중첩 캐스케이드: Agent → Task (DES-004 §6, 기존 cascadeToTasks 재사용)
       this.cascadeToTasks(agent.id, targetStatus, now);
+
+      // 채널 전이: cancelled만 종료다 (DES-007 v2 §8). paused는 재개 가능한
+      // 상태라 readonly로 만들지 않는다 (FIND-06 수정).
+      if (targetStatus === AgentStatus.CANCELLED) {
+        this.conversationService.markReadonlySync(agent.id);
+      }
     }
   }
 

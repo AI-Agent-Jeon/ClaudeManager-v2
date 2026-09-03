@@ -436,13 +436,31 @@ export class ConversationService {
     return this.createForAgentSync(agentId);
   }
 
-  /** Agent 종료(completed/cancelled) 시 CH-AGENT를 readonly로 전환한다 (DES-007 v2 §8) */
-  async markReadonly(agentId: string): Promise<void> {
+  /**
+   * 동기 코어 — Agent 종료(completed/cancelled) 시 CH-AGENT를 readonly로
+   * 전환한다 (DES-007 v2 §8).
+   *
+   * FIND-06 수정 — `AgentService.cascadeFromProjectSync()`가 Project 취소
+   * 캐스케이드의 `db.transaction()` 콜백 **안에서 이 메서드를 직접** 호출한다
+   * (`agent.service.ts`의 `createForAgentSync` 호출과 같은 패턴 · Layer 2-6).
+   * `async`가 아니므로 본문에 `await`를 쓰면 컴파일 자체가 되지 않는다 —
+   * "트랜잭션 콜백 안에서 안전하다"는 전제를 타입 체커가 강제한다.
+   */
+  markReadonlySync(agentId: string): void {
     const conv = this.conversationRepo.findByEntityId(agentId);
     // 채널이 없으면 조용히 반환한다 — D-09에 따라 Agent 생성 시 항상 개설되지만,
     // 존재하지 않는 채널을 전이시키려 하지 않는 방어적 처리다.
     if (!conv) return;
     this.conversationRepo.updateStatus(conv.id, ConversationStatus.READONLY);
+  }
+
+  /**
+   * 공개 API — 동기 코어(`markReadonlySync`)를 감싸는 얇은 래퍼이며, 단독
+   * 호출(트랜잭션 조율이 필요 없는 경우)에 쓴다. `AgentService.updateStatus()`가
+   * 이 경로를 그대로 쓴다 — 동작은 바뀌지 않는다.
+   */
+  async markReadonly(agentId: string): Promise<void> {
+    return this.markReadonlySync(agentId);
   }
 
   /** Agent 삭제 시 대화를 보존하고 아카이브로 전환한다 (D-27) */
