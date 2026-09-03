@@ -2,7 +2,7 @@
 
 > Phase 1 테스트
 > 버전: v1.1 (2026-09-03)
-> **원본**: [Notion TST-001](https://app.notion.com/) · Git 동기화 2026-09-03
+> **원본**: [Notion TST-001](https://app.notion.com/p/3d0d066504ec816586bae0037088bf81) · Git 동기화 2026-09-03
 > 기준 원본 정책: Notion = 대표 승인 원본 / Git = 에이전트 실행 원본. 충돌 시 Notion 우선.
 
 ---
