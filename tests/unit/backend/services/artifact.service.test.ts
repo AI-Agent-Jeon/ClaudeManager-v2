@@ -142,6 +142,21 @@ describe('ArtifactService.upsert', () => {
     expect(second.title).toBe('갱신');
     expect(second.syncStatus).toBe('git_only');
   });
+
+  it('status=approved인 기존 행을 upsert해도 draft로 되돌아가지 않는다 (D-3 불변식 회귀 방어 — artifact.repository.ts 상단 주석)', async () => {
+    const id = seedArtifact(testDb.db, stageId, { code: 'UP-003', status: 'approved' });
+
+    const result = await service.upsert({ stageId, code: 'UP-003', title: '재승인 없이 갱신' });
+
+    expect(result.id).toBe(id);
+    expect(result.status).toBe('approved');
+  });
+
+  it('존재하지 않는 stageId면 404 STAGE_NOT_FOUND (FK 위반 변환)', async () => {
+    await expect(
+      service.upsert({ stageId: crypto.randomUUID(), code: 'NO-STAGE', title: 't' }),
+    ).rejects.toMatchObject({ statusCode: 404, code: 'STAGE_NOT_FOUND' });
+  });
 });
 
 describe('ArtifactService.getContent — 보안', () => {

@@ -723,6 +723,112 @@ function presentArtifacts(result: ArtifactsResult, deps: CommandDeps): void {
 }
 
 // ─────────────────────────────────────────────
+// artifacts add — D-3 (신설, 대표 승인)
+// ─────────────────────────────────────────────
+//
+// `ArtifactService.upsert()`는 이미 구현돼 있었으나 이를 배선하는 HTTP
+// 라우트도 CLI 명령도 없어 FR-031 전체가 도달 불가능했다(설계 공백,
+// D-3 조사 결과). `POST /api/artifacts`를 그대로 호출한다.
+//
+// `--stage <uuid>` 대신 `--skill <skill>`을 받는다 — `resolveStageBySkill`
+// (위, `stage start/complete`가 이미 쓰는 헬퍼)을 그대로 재사용해 스킬명을
+// 그 스킬의 현재 Phase 단계 id로 해석한다. 대표가 raw UUID를 외워 입력할
+// 필요가 없고, 존재하지 않는 stage를 상정하는 경로 자체가 차단된다
+// (진행 중인 Phase의 7단계 중 하나로만 좁혀진다) — `cm progress`가 raw
+// stage id를 아예 노출하지 않는 것과 같은 이유(§3-1 상단 주석 "응답
+// 필드에 없는 것을 화면에 만들지 않는다").
+
+export type ArtifactsAddResult =
+  | { ok: true; artifact: Artifact }
+  | { ok: false; reason: 'invalid_skill'; skill: string }
+  | { ok: false; reason: 'no_phase' }
+  | { ok: false; reason: 'validation'; message: string }
+  | { ok: false; reason: 'server_unreachable'; serverUrl: string }
+  | { ok: false; reason: 'unauthenticated' };
+
+export async function runArtifactsAdd(opts: {
+  client: CliApiClient;
+  skill: string;
+  code: string;
+  title: string;
+  notionUrl?: string;
+  gitPath?: string;
+}): Promise<ArtifactsAddResult> {
+  const resolved = await resolveStageBySkill(opts.client, opts.skill);
+  if (!resolved.ok) return resolved;
+
+  try {
+    const res = await opts.client.post<{ data: Artifact }>('/artifacts', {
+      stageId: resolved.stage.id,
+      code: opts.code,
+      title: opts.title,
+      notionUrl: opts.notionUrl,
+      gitPath: opts.gitPath,
+    });
+    return { ok: true, artifact: res.data };
+  } catch (err) {
+    return mapArtifactsAddError(err, opts.client);
+  }
+}
+
+function mapArtifactsAddError(
+  err: unknown,
+  client: CliApiClient,
+): Exclude<ArtifactsAddResult, { ok: true }> {
+  if (err instanceof ServerUnreachableError) {
+    return { ok: false, reason: 'server_unreachable', serverUrl: client.baseUrl };
+  }
+  if (err instanceof ApiRequestError) {
+    if (err.code === ErrorCode.VALIDATION_ERROR) {
+      return { ok: false, reason: 'validation', message: err.message };
+    }
+    if (err.code === ErrorCode.UNAUTHORIZED || err.code === ErrorCode.AUTH_TOKEN_EXPIRED) {
+      return { ok: false, reason: 'unauthenticated' };
+    }
+  }
+  throw err;
+}
+
+function presentArtifactsAdd(result: ArtifactsAddResult, deps: CommandDeps): void {
+  if (!result.ok) {
+    switch (result.reason) {
+      case 'invalid_skill':
+        deps.errorLog(invalidSkillBlock(result.skill));
+        break;
+      case 'no_phase':
+        deps.errorLog('✗ 진행 중인 Phase가 없습니다');
+        break;
+      case 'validation':
+        deps.errorLog(`✗ ${result.message}`);
+        break;
+      case 'server_unreachable':
+        deps.errorLog(serverUnreachableBlock(result.serverUrl));
+        break;
+      case 'unauthenticated':
+        deps.errorLog(unauthenticatedBlock(false));
+        break;
+    }
+    deps.setExitCode(1);
+    return;
+  }
+
+  const a = result.artifact;
+  deps.log(
+    successBlock(
+      '산출물 등록 완료',
+      formatFields([
+        ['코드', a.code],
+        ['제목', a.title],
+        ['상태', a.status],
+        ['동기화', a.syncStatus],
+        ['최종수정', formatTimestamp(a.updatedAt)],
+      ]),
+    ),
+  );
+  deps.setExitCode(0);
+}
+
+// ─────────────────────────────────────────────
 // Commander 연결
 // ─────────────────────────────────────────────
 
@@ -778,7 +884,7 @@ export function registerProgressCommand(
       presentStageComplete(result, deps);
     });
 
-  program
+  const artifacts = program
     .command('artifacts')
     .description('산출물 + 동기화 상태를 조회한다 (SCR-CH10)')
     .option('--sync <상태>', `동기화 상태 필터 (${SYNC_STATUS_VALUES.join('|')})`)
@@ -788,4 +894,34 @@ export function registerProgressCommand(
       const result = await runArtifacts({ client: deps.createClient(), sync: opts.sync });
       presentArtifacts(result, deps);
     });
+
+  artifacts
+    .command('add')
+    .description('산출물을 등록·갱신한다 — code 기준 upsert (D-3, 신설)')
+    .requiredOption('--skill <skill>', `단계 스킬명 (${SKILL_VALUES.join('|')})`)
+    .requiredOption('--code <code>', '산출물 코드 (예: PLN-001)')
+    .requiredOption('--title <title>', '산출물 제목')
+    .option('--notion-url <url>', 'Notion 문서 URL')
+    .option('--git-path <path>', 'Git 저장소 내 경로')
+    .action(
+      async (opts: {
+        skill: string;
+        code: string;
+        title: string;
+        notionUrl?: string;
+        gitPath?: string;
+      }) => {
+        const guard = checkAuth(deps.homeDir, deps.now);
+        if (!guard.ok) return presentAuthGuardFailure(guard, deps);
+        const result = await runArtifactsAdd({
+          client: deps.createClient(),
+          skill: opts.skill,
+          code: opts.code,
+          title: opts.title,
+          notionUrl: opts.notionUrl,
+          gitPath: opts.gitPath,
+        });
+        presentArtifactsAdd(result, deps);
+      },
+    );
 }

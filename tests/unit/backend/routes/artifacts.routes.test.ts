@@ -6,10 +6,11 @@ import { seedArtifact, seedPhase, seedStages } from '../../../fixtures/test-db.j
 /**
  * artifacts.routes — FR-031 (산출물 동기화 추적)
  *
- * 정의 원본: DES-002 v2.1 §3-3 · §5(GET /api/artifacts · GET /api/artifacts/:id/content)
+ * 정의 원본: DES-002 v2.1 §3-3 · §5(GET /api/artifacts · GET /api/artifacts/:id/content) ·
+ * D-3(테스트 스킬 9단계 수정 루프 2차, 대표 승인) — `POST /api/artifacts` 신설
  *
- * 산출물 생성 라우트는 Phase 1 범위에 없다(DES-002 §3-3 목록에 POST가 없다) —
- * 테스트 데이터는 다른 route 테스트와 같은 방식으로 `app.db`에 직접 시딩한다.
+ * GET 2종의 테스트 데이터는 다른 route 테스트와 같은 방식으로 `app.db`에
+ * 직접 시딩한다. POST는 이 파일이 실제로 검증하는 대상이다.
  */
 
 let app: FastifyInstance;
@@ -178,6 +179,139 @@ describe('GET /api/artifacts/:id/content — FR-031', () => {
   it('인증 없이 요청하면 401', async () => {
     const id = seedArtifact(app.db, stageId, { code: 'AUTH-TEST', gitPath: 'CHANGELOG.md' });
     const res = await app.inject({ method: 'GET', url: `/api/artifacts/${id}/content` });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('POST /api/artifacts — D-3 (산출물 등록 경로 신설)', () => {
+  it('신규 code면 201이 아니라 200과 status=draft로 생성된다', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/artifacts',
+      headers: authHeader(),
+      payload: { stageId, code: 'NEW-001', title: '신규 산출물' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const data = res.json().data as { code: string; status: string; syncStatus: string };
+    expect(data.code).toBe('NEW-001');
+    expect(data.status).toBe('draft');
+    expect(data.syncStatus).toBe('missing');
+
+    const followUp = await app.inject({
+      method: 'GET',
+      url: '/api/artifacts',
+      headers: authHeader(),
+    });
+    expect((followUp.json().data as Array<{ code: string }>).map((a) => a.code)).toContain(
+      'NEW-001',
+    );
+  });
+
+  it('기존 code면 갱신한다 (id 유지, upsert)', async () => {
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/artifacts',
+      headers: authHeader(),
+      payload: { stageId, code: 'UP-001', title: '최초 제목' },
+    });
+    const firstId = (first.json().data as { id: string }).id;
+
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/artifacts',
+      headers: authHeader(),
+      payload: {
+        stageId,
+        code: 'UP-001',
+        title: '갱신된 제목',
+        gitPath: 'docs/up-001.md',
+      },
+    });
+
+    expect(second.statusCode).toBe(200);
+    const data = second.json().data as {
+      id: string;
+      title: string;
+      syncStatus: string;
+    };
+    expect(data.id).toBe(firstId);
+    expect(data.title).toBe('갱신된 제목');
+    expect(data.syncStatus).toBe('git_only');
+  });
+
+  it('status=approved인 기존 행을 upsert해도 draft로 되돌아가지 않는다 (불변식 회귀 방어)', async () => {
+    const id = seedArtifact(app.db, stageId, { code: 'APPROVED-001', status: 'approved' });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/artifacts',
+      headers: authHeader(),
+      payload: { stageId, code: 'APPROVED-001', title: '갱신 시도' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const data = res.json().data as { id: string; status: string };
+    expect(data.id).toBe(id);
+    expect(data.status).toBe('approved');
+  });
+
+  it.each([
+    ['synced', 'https://notion/x', 'docs/x.md'],
+    ['notion_only', 'https://notion/x', undefined],
+    ['git_only', undefined, 'docs/x.md'],
+    ['missing', undefined, undefined],
+  ])('syncStatus는 notionUrl·gitPath에서 파생된다 — %s', async (expected, notionUrl, gitPath) => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/artifacts',
+      headers: authHeader(),
+      payload: { stageId, code: `DERIVE-${expected}`, title: 't', notionUrl, gitPath },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect((res.json().data as { syncStatus: string }).syncStatus).toBe(expected);
+  });
+
+  it('존재하지 않는 stageId면 4xx (STAGE_NOT_FOUND)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/artifacts',
+      headers: authHeader(),
+      payload: { stageId: crypto.randomUUID(), code: 'NO-STAGE', title: 't' },
+    });
+
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(res.statusCode).toBeLessThan(500);
+    expect(res.json().code).toBe('STAGE_NOT_FOUND');
+  });
+
+  it('필수 필드(stageId·code·title) 누락 시 400 VALIDATION_ERROR', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/artifacts',
+      headers: authHeader(),
+      payload: { stageId, code: 'MISSING-TITLE' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('status·syncStatus 주입을 시도하면 400 — additionalProperties: false가 막는다', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/artifacts',
+      headers: authHeader(),
+      payload: { stageId, code: 'INJECT-001', title: 't', status: 'approved' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('인증 없이 요청하면 401', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/artifacts',
+      payload: { stageId, code: 'AUTH-POST', title: 't' },
+    });
     expect(res.statusCode).toBe(401);
   });
 });

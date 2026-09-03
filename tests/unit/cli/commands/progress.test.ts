@@ -7,6 +7,7 @@ import { createProgram } from '../../../../src/cli/commands/auth.js';
 import {
   registerProgressCommand,
   runArtifacts,
+  runArtifactsAdd,
   runProgress,
   runProgressWaive,
   runStageComplete,
@@ -796,6 +797,190 @@ describe('runArtifacts', () => {
   });
 });
 
+describe('runArtifactsAdd — D-3 (신설, cm artifacts add)', () => {
+  it('알 수 없는 스킬명은 서버 호출 전에 막는다', async () => {
+    const get = vi.fn();
+    const client = fakeClient({ get });
+
+    const result = await runArtifactsAdd({
+      client,
+      skill: 'deploy-now',
+      code: 'X-001',
+      title: 'X',
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'invalid_skill', skill: 'deploy-now' });
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('성공 — 현재 Phase에서 스킬에 해당하는 단계 id로 upsert 요청을 보낸다', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const created = {
+      ...ARTIFACT_SYNCED,
+      id: 'art-new',
+      code: 'PLN-002',
+      status: 'draft',
+      syncStatus: 'missing',
+      notionUrl: null,
+      gitPath: null,
+    };
+    const post = routed((path, body) => {
+      expect(path).toBe('/artifacts');
+      expect(body).toEqual({
+        stageId: 'stage-plan',
+        code: 'PLN-002',
+        title: '새 산출물',
+        notionUrl: undefined,
+        gitPath: undefined,
+      });
+      return { data: created };
+    });
+    const client = fakeClient({ get, post: post as CliApiClient['post'] });
+
+    const result = await runArtifactsAdd({
+      client,
+      skill: 'plan',
+      code: 'PLN-002',
+      title: '새 산출물',
+    });
+
+    expect(result).toEqual({ ok: true, artifact: created });
+  });
+
+  it('notionUrl·gitPath를 함께 주면 그대로 전달된다', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = routed((_path, body) => {
+      expect(body).toMatchObject({
+        notionUrl: 'https://notion/x',
+        gitPath: 'docs/x.md',
+      });
+      return { data: ARTIFACT_SYNCED };
+    });
+    const client = fakeClient({ get, post: post as CliApiClient['post'] });
+
+    await runArtifactsAdd({
+      client,
+      skill: 'plan',
+      code: 'PLN-001',
+      title: '요구사항 정의서',
+      notionUrl: 'https://notion/x',
+      gitPath: 'docs/x.md',
+    });
+
+    expect(post).toHaveBeenCalled();
+  });
+
+  it('진행 중인 Phase가 없으면 no_phase', async () => {
+    const client = fakeClient({
+      get: vi.fn().mockRejectedValue(new ApiRequestError(404, ErrorCode.NOT_FOUND, '없음')),
+    });
+
+    const result = await runArtifactsAdd({ client, skill: 'plan', code: 'X', title: 'Y' });
+
+    expect(result).toEqual({ ok: false, reason: 'no_phase' });
+  });
+
+  it('VALIDATION_ERROR면 validation', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi
+      .fn()
+      .mockRejectedValue(new ApiRequestError(400, ErrorCode.VALIDATION_ERROR, '검증 실패'));
+    const client = fakeClient({ get, post });
+
+    const result = await runArtifactsAdd({ client, skill: 'plan', code: 'X', title: 'Y' });
+
+    expect(result).toEqual({ ok: false, reason: 'validation', message: '검증 실패' });
+  });
+
+  it('존재하지 않는 stage면 STAGE_NOT_FOUND — invalid_skill·no_phase 어느 쪽도 아니므로 uncaught로 전파된다 (방어적, 정상 경로에서 발생하지 않는다)', async () => {
+    // resolveStageBySkill이 항상 "현재 Phase의 실제 stage.id"만 돌려주므로
+    // STAGE_NOT_FOUND는 서버·클라이언트 스냅숏이 어긋난 경쟁 상태에서만
+    // 이론적으로 발생한다 — mapArtifactsAddError가 이를 흡수하지 않고
+    // 그대로 던지는 것이 의도된 동작이다(다른 미매치 도메인 에러와 동일).
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi
+      .fn()
+      .mockRejectedValue(new ApiRequestError(404, ErrorCode.STAGE_NOT_FOUND, '단계 없음'));
+    const client = fakeClient({ get, post });
+
+    await expect(
+      runArtifactsAdd({ client, skill: 'plan', code: 'X', title: 'Y' }),
+    ).rejects.toBeInstanceOf(ApiRequestError);
+  });
+
+  it('서버 unreachable이면 exit 1', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi.fn().mockRejectedValue(new ServerUnreachableError('http://127.0.0.1:3000/api'));
+    const client = fakeClient({ get, post });
+
+    const result = await runArtifactsAdd({ client, skill: 'plan', code: 'X', title: 'Y' });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'server_unreachable',
+      serverUrl: 'http://127.0.0.1:3000/api',
+    });
+  });
+});
+
+describe('registerProgressCommand — cm artifacts add 출력', () => {
+  function buildTestProgram(client: CliApiClient) {
+    const logs: string[] = [];
+    const errors: string[] = [];
+    let exitCode: number | undefined;
+    const program = createProgram();
+    program.exitOverride();
+    registerProgressCommand(program, {
+      createClient: () => client,
+      homeDir,
+      log: (msg: string) => logs.push(msg),
+      errorLog: (msg: string) => errors.push(msg),
+      setExitCode: (code: number) => {
+        exitCode = code;
+      },
+    });
+    return { program, logs, errors, getExitCode: () => exitCode };
+  }
+
+  it('등록 성공 시 요약을 출력한다', async () => {
+    const get = vi.fn().mockResolvedValue({ data: basePhaseCurrent() });
+    const post = vi.fn().mockResolvedValue({ data: ARTIFACT_MISSING });
+    const client = fakeClient({ get, post });
+    const { program, logs, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(
+      ['artifacts', 'add', '--skill', 'plan', '--code', 'DES-999', '--title', '제목'],
+      { from: 'user' },
+    );
+
+    expect(getExitCode()).toBe(0);
+    expect(logs.join('\n')).toContain('산출물 등록 완료');
+    expect(logs.join('\n')).toContain('DES-999');
+  });
+
+  it('알 수 없는 스킬명이면 exit 1', async () => {
+    const client = fakeClient();
+    const { program, errors, getExitCode } = buildTestProgram(client);
+
+    await program.parseAsync(
+      ['artifacts', 'add', '--skill', 'bogus', '--code', 'X', '--title', 'Y'],
+      { from: 'user' },
+    );
+
+    expect(getExitCode()).toBe(1);
+    expect(errors.join('\n')).toContain('알 수 없는 스킬');
+  });
+
+  it('필수 옵션 누락 시 commander가 에러를 던진다', async () => {
+    const client = fakeClient();
+    const { program } = buildTestProgram(client);
+
+    await expect(
+      program.parseAsync(['artifacts', 'add', '--skill', 'plan'], { from: 'user' }),
+    ).rejects.toThrow();
+  });
+});
+
 describe('registerProgressCommand — cm artifacts 출력', () => {
   function buildTestProgram(client: CliApiClient) {
     const logs: string[] = [];
@@ -878,6 +1063,10 @@ describe('registerProgressCommand — 인증 가드', () => {
     const stage = program.commands.find((c) => c.name() === 'stage');
     const subNames = stage?.commands.map((c) => c.name()) ?? [];
     expect(subNames).toEqual(expect.arrayContaining(['start', 'complete']));
+
+    const artifacts = program.commands.find((c) => c.name() === 'artifacts');
+    const artifactsSubNames = artifacts?.commands.map((c) => c.name()) ?? [];
+    expect(artifactsSubNames).toEqual(expect.arrayContaining(['add']));
   });
 });
 
