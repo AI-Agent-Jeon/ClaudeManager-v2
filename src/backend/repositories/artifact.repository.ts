@@ -137,9 +137,24 @@ export class ArtifactRepository {
 
   /**
    * `code` UNIQUE 기준 upsert. 신규면 `status='draft'`로 삽입하고, 기존
-   * 행이면 `stage_id`·`title`·`notion_url`·`git_path`·`updated_at`만 갱신한다
+   * 행이면 `stage_id`·`title`·`notion_url`·`git_path`·`updated_at`을 갱신한다
    * — `status`는 SET 절에 없으므로 기존 값이 그대로 유지된다(승인 흐름이
    * 별도로 관리하는 값이라 upsert가 되돌리면 안 된다).
+   *
+   * R2-03 (2026-09-03, 대표 결정 A안) — `notion_url`·`git_path`는
+   * `COALESCE(excluded.<col>, <col>)`로 갱신한다. 예전에는 `SET notion_url =
+   * excluded.notion_url`로 무조건 덮어써, `cm artifacts add --code DES-001
+   * --git-path p`처럼 `notionUrl`을 생략(NULL)하고 기존 `synced` 행을 갱신하면
+   * `notion_url`이 NULL이 되어 `syncStatus`가 `synced → git_only`로 조용히
+   * 퇴행했다(FR-031이 막으려던 사고 그 자체 — DES-003 §4-4 각주). `COALESCE`는
+   * `excluded.<col>`이 NULL(=생략)일 때만 기존 값을 유지하고, 값이 명시되면
+   * (빈 문자열 포함) 그 값으로 갱신한다 — "값을 생략하면 유지, 명시하면 반영"
+   * 이 FindManyOpts §17-18 판단 기준(빈 문자열도 "없음")과 다른 이유는, 이건
+   * "무엇을 없음으로 볼지"가 아니라 "무엇을 갱신 대상으로 볼지"의 문제이기
+   * 때문이다 — CLI가 옵션을 아예 넘기지 않으면 서비스 계층이 `null`을 넘긴다.
+   * `title`·`stage_id`·`updated_at`은 필수 입력이라 생략될 수 없으므로 그대로
+   * `SET`한다 — COALESCE를 과잉 적용하지 않는다. 트레이드오프: 한 번 넣은
+   * URL을 CLI로 지울 수 없다(대표 인지·승인, 드문 조작이라 수용).
    *
    * `stage_id` FK 위반은 404 STAGE_NOT_FOUND로 변환한다 — ApprovalRepository·
    * PhaseRepository와 같은 판단 기준이다.
@@ -153,8 +168,8 @@ export class ArtifactRepository {
            ON CONFLICT(code) DO UPDATE SET
              stage_id = excluded.stage_id,
              title = excluded.title,
-             notion_url = excluded.notion_url,
-             git_path = excluded.git_path,
+             notion_url = COALESCE(excluded.notion_url, notion_url),
+             git_path = COALESCE(excluded.git_path, git_path),
              updated_at = excluded.updated_at`,
         )
         .run(row.id, row.stageId, row.code, row.title, row.notionUrl, row.gitPath, row.updatedAt);

@@ -185,6 +185,105 @@ describe('ArtifactRepository.upsert', () => {
     expect(count).toBe(1);
   });
 
+  it(
+    'R2-03 — synced 행에 gitPath만(notionUrl 생략=null) upsert하면 ' +
+      'notion_url이 보존되고 git_path만 갱신된다 (동기화 상태 퇴행 방지)',
+    () => {
+      seedArtifact(testDb.db, stageId, {
+        code: 'DES-001',
+        title: '원본 제목',
+        notionUrl: 'https://notion/des-001',
+        gitPath: 'docs/design/des-001-old.md',
+      });
+
+      const updated = repo.upsert({
+        id: crypto.randomUUID(),
+        stageId,
+        code: 'DES-001',
+        title: '원본 제목',
+        notionUrl: null, // CLI에서 --notion-url을 생략한 상황
+        gitPath: 'docs/design/des-001-new.md',
+        updatedAt: isoNow(),
+      });
+
+      expect(updated.notion_url).toBe('https://notion/des-001'); // 보존
+      expect(updated.git_path).toBe('docs/design/des-001-new.md'); // 갱신
+    },
+  );
+
+  it(
+    'R2-03 — synced 행에 notionUrl만(gitPath 생략=null) upsert하면 ' +
+      'git_path가 보존되고 notion_url만 갱신된다 (반대 방향)',
+    () => {
+      seedArtifact(testDb.db, stageId, {
+        code: 'DES-002',
+        title: '원본 제목',
+        notionUrl: 'https://notion/des-002-old',
+        gitPath: 'docs/design/des-002.md',
+      });
+
+      const updated = repo.upsert({
+        id: crypto.randomUUID(),
+        stageId,
+        code: 'DES-002',
+        title: '원본 제목',
+        notionUrl: 'https://notion/des-002-new',
+        gitPath: null, // CLI에서 --git-path를 생략한 상황
+        updatedAt: isoNow(),
+      });
+
+      expect(updated.git_path).toBe('docs/design/des-002.md'); // 보존
+      expect(updated.notion_url).toBe('https://notion/des-002-new'); // 갱신
+    },
+  );
+
+  it('R2-03 — title은 COALESCE 대상이 아니다 — 생략 없이 항상 반영된다', () => {
+    seedArtifact(testDb.db, stageId, {
+      code: 'DES-003',
+      title: '원본 제목',
+      notionUrl: 'https://notion/des-003',
+      gitPath: 'docs/design/des-003.md',
+    });
+
+    const updated = repo.upsert({
+      id: crypto.randomUUID(),
+      stageId,
+      code: 'DES-003',
+      title: '갱신된 제목',
+      notionUrl: null,
+      gitPath: null,
+      updatedAt: isoNow(),
+    });
+
+    expect(updated.title).toBe('갱신된 제목');
+    // 두 컬럼 다 생략했으므로 둘 다 보존된다
+    expect(updated.notion_url).toBe('https://notion/des-003');
+    expect(updated.git_path).toBe('docs/design/des-003.md');
+  });
+
+  it('R2-03 회귀 — approved 행에 필드 일부만 upsert해도 status는 draft로 되돌아가지 않는다', () => {
+    seedArtifact(testDb.db, stageId, {
+      code: 'DES-004',
+      title: '원본 제목',
+      status: 'approved',
+      notionUrl: 'https://notion/des-004',
+      gitPath: 'docs/design/des-004.md',
+    });
+
+    const updated = repo.upsert({
+      id: crypto.randomUUID(),
+      stageId,
+      code: 'DES-004',
+      title: '원본 제목',
+      notionUrl: null,
+      gitPath: 'docs/design/des-004-v2.md',
+      updatedAt: isoNow(),
+    });
+
+    expect(updated.status).toBe('approved');
+    expect(updated.notion_url).toBe('https://notion/des-004'); // 보존
+  });
+
   it('존재하지 않는 stageId면 404 STAGE_NOT_FOUND (FK 위반 변환)', () => {
     const insert = () =>
       repo.upsert({

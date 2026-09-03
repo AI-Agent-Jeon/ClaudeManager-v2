@@ -438,6 +438,19 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   유지한다. `AgentService.getById()`의 Task 목록 조회도 `TaskService.list()` 경유로 바꿔 `taskRepo`
   의존을 완전히 제거했다. 동작은 이전과 동일 — `tests/unit/backend/routes/project-cascade.test.ts`
   전건이 수정 없이 통과한다
+- **R2-03 — `ArtifactRepository.upsert()`가 `notion_url`·`git_path`를 무조건 덮어써 동기화 상태가
+  조용히 퇴행하던 문제**(2차 리뷰 보통 3건 중 1건, 대표 결정 A안). `cm artifacts add --code DES-001
+  --title T --git-path p`처럼 `notionUrl`을 생략(NULL)해 기존 `synced` 행을 갱신하면 `ON CONFLICT DO
+  UPDATE SET notion_url = excluded.notion_url`이 NULL로 덮어써 `syncStatus`가 `synced → git_only`로
+  퇴행했다 — FR-031(동기화 추적)이 막으려던 사고를 동기화 기능 자신이 만들어내는 구조였다(DES-002
+  v2.6 명세와는 일치하는 사양 결함, DES-003 §4-4 각주가 언급하는 2026-09-01 "analyze 건너뜀" 오진단과
+  같은 뿌리). `notion_url`·`git_path`에 `COALESCE(excluded.<col>, <col>)`을 적용해 생략한 필드는 기존
+  값을 유지하도록 교정했다. `title`·`stage_id`·`updated_at`은 필수 입력이라 COALESCE를 적용하지 않고
+  그대로 `SET`한다. `status`는 원래대로 `SET` 절에 없다(승인 흐름 전용, 이 결함과 무관 — 건드리지
+  않았다). 트레이드오프: 한 번 넣은 URL을 CLI로 지울 수 없다(대표 인지·승인). 양방향(`--git-path`만/
+  `--notion-url`만) 보존과 `title` 갱신 반영을 `artifact.repository.test.ts`에 추가했고, 실제 서버를
+  띄워 `synced` 행에 `--git-path`만 주고 `cm artifacts add`를 실행해 `notion_url` 보존·`syncStatus:
+  synced` 유지를 확인했다
 
 ### Security
 
