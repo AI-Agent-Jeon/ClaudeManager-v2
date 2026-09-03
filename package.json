@@ -5,7 +5,7 @@
   "description": "1인 CEO를 위한 Skill 기반 멀티 에이전트 오케스트레이션 시스템",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.9"
   },
   "workspaces": [
     "src/shared",
@@ -13,9 +13,9 @@
     "src/cli"
   ],
   "scripts": {
-    "server:start": "tsx src/backend/server.ts",
-    "server:dev": "tsx watch src/backend/server.ts",
-    "cli": "tsx src/cli/index.ts",
+    "server:start": "tsx --env-file-if-exists=.env src/backend/server.ts",
+    "server:dev": "tsx watch --env-file-if-exists=.env src/backend/server.ts",
+    "cli": "tsx --env-file-if-exists=.env src/cli/index.ts",
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -25,7 +25,7 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "db:generate": "echo \"마이그레이션은 손으로 쓴다 — src/backend/migrations/*.sql (DES-003 §9). drizzle-kit generate는 CHECK 제약·부분 인덱스·FTS5를 잃는다\" && exit 1",
-    "db:migrate": "tsx src/backend/db/migrate.ts"
+    "db:migrate": "tsx --env-file-if-exists=.env src/backend/db/migrate.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.11",
