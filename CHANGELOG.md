@@ -411,6 +411,16 @@ Phase 1 — 기반 구축 (CLI + API · 대화 · 승인 게이트)
   cancelled와 직접 PATCH cancelled의 채널 상태가 같은지)·과잉 적용 방어(`paused` 캐스케이드는
   readonly로 만들지 않는지)·트랜잭션 롤백(채널 전이까지 함께 롤백되는지)을
   `tests/unit/backend/routes/project-cascade.test.ts`에 이어 붙여 검증한다
+- **NEW-01 — `npm run db:migrate`가 무동작(no-op)이던 문제** — `runMigrations()`는 `migrate.ts`에서
+  export만 됐고 실행 진입점이 없어, `db:migrate` 스크립트(`tsx src/backend/db/migrate.ts`)를 실행해도
+  아무 일도 일어나지 않았다. 배포 절차에서 이 명령을 실행하고 "마이그레이션 완료"로 판단하면 실제로는
+  아무것도 적용되지 않은 채 넘어가는, 조용히 실패하는 종류의 결함이었다. `migrate.ts`에 CLI 진입점
+  (`runMigrateCli()`)을 추가했다 — 서버 기동 경로(`plugins/database.ts`)와 동일한 `openDatabase()`·
+  `runMigrations()`를 그대로 재사용해 로직이 두 경로로 갈리지 않게 했고, DB 경로는 `backend/config.ts`의
+  확립된 방식(`CM_DB_PATH` → `DB_FILE_PATH` 기본값)을 그대로 따른다. 적용됨·건너뜀·최종 버전을 사람이
+  읽을 수 있게 출력하고, 실패하면 `process.exitCode = 1`로 끝나 배포 스크립트가 실패를 감지할 수 있다.
+  `src/cli/index.ts`와 같은 Node ESM entry-point 판별 관용구(`isMainModule`)로 감싸 `plugins/database.ts`가
+  `runMigrations`를 `import`할 때(서버 기동마다) CLI 본체가 중복 실행되지 않도록 했다
 
 ### Security
 

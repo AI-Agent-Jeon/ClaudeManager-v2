@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Database } from 'better-sqlite3';
+import { loadConfig } from '../config.js';
+import { openDatabase } from './index.js';
 
 /**
- * 마이그레이션 러너
+ * 마이그레이션 러너 겸 CLI 진입점 (`npm run db:migrate`)
  *
  * 정의 원본: DES-003 v2.1 §9 마이그레이션 전략
  *
@@ -12,6 +14,10 @@ import type { Database } from 'better-sqlite3';
  * 트리거 3종은 Drizzle 스키마로 표현되지 않는다. 설계가 "CHECK 제약은
  * 마이그레이션에 포함한다 — 애플리케이션 검증에만 의존하지 않는다"고 규정하므로
  * SQL이 스키마의 원본이고, `schema.ts`는 쿼리 타입을 위한 거울이다.
+ *
+ * CLI 진입점은 `runMigrations()`를 그대로 재사용한다 — 서버 기동 경로
+ * (`plugins/database.ts`)와 로직을 복제하면 두 경로가 갈린다. DB 경로는
+ * `backend/config.ts`의 확립된 방식(`CM_DB_PATH` → 기본값)을 그대로 따른다.
  */
 
 const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
@@ -89,4 +95,61 @@ export function runMigrations(db: Database): MigrationResult {
   }
 
   return { applied, skipped };
+}
+
+/**
+ * CLI 진입점 본체 — `npm run db:migrate`.
+ *
+ * DB 경로는 `loadConfig()`(`CM_DB_PATH` → `DB_FILE_PATH` 기본값)로 정하고,
+ * `openDatabase()`로 연결해 `runMigrations()`를 돌린다 — 전부 서버 기동
+ * 경로와 동일한 함수다. 사람이 읽을 결과(적용/건너뜀/최종 버전)를 출력하고,
+ * 실패하면 예외를 그대로 위(호출부)로 던진다 — 배포 스크립트가 종료 코드로
+ * 실패를 감지해야 하기 때문이다.
+ */
+export function runMigrateCli(): void {
+  const { dbPath } = loadConfig();
+  console.info(`DB: ${dbPath}`);
+
+  const db = openDatabase({ path: dbPath });
+  try {
+    const { applied, skipped } = runMigrations(db);
+
+    if (applied.length > 0) {
+      console.info(`적용됨 (${applied.length}개):`);
+      for (const name of applied) console.info(`  - ${name}`);
+    } else {
+      console.info('적용됨: 없음');
+    }
+
+    if (skipped.length > 0) {
+      console.info(`건너뜀 — 이미 적용됨 (${skipped.length}개):`);
+      for (const name of skipped) console.info(`  - ${name}`);
+    }
+
+    const latest = MIGRATION_FILES[MIGRATION_FILES.length - 1];
+    console.info(`최종 버전: ${latest}`);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * `src/backend/db/migrate.ts`가 직접 실행됐을 때만 CLI 본체를 돈다.
+ * `plugins/database.ts`가 `runMigrations`를 `import`할 때도 이 모듈이
+ * 로드되므로, 가드 없이 최상위에서 실행하면 서버 기동마다 CLI가 중복
+ * 실행된다 — `src/cli/index.ts`와 동일한 Node ESM entry-point 판별 관용구.
+ */
+const isMainModule =
+  process.argv[1] !== undefined &&
+  resolve(fileURLToPath(import.meta.url)) === resolve(process.argv[1]);
+
+if (isMainModule) {
+  try {
+    runMigrateCli();
+  } catch (err) {
+    // 배포 스크립트가 실패를 감지할 수 있어야 한다 — 조용히 넘어가는 것이
+    // NEW-01의 핵심 결함이었다.
+    console.error('마이그레이션 적용 실패:', err instanceof Error ? err.message : err);
+    process.exitCode = 1;
+  }
 }
